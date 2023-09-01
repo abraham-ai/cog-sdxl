@@ -6,6 +6,7 @@ import gc
 import fnmatch
 import mimetypes
 import os
+import time
 import re
 import shutil
 import tarfile
@@ -31,6 +32,8 @@ from transformers import (
 
 MODEL_PATH = "./cache"
 
+from io_utils import download_and_prep_training_data
+
 def preprocess(
     working_directory,
     input_images_filetype: str,
@@ -44,7 +47,6 @@ def preprocess(
     substitution_tokens: List[str],
     left_right_flip_augmentation: bool = False,
 ) -> Path:
-    # assert str(files).endswith(".zip"), "files must be a zip file"
 
     # clear TEMP_IN_DIR first.
     TEMP_IN_DIR = os.path.join(working_directory,  "images_in")
@@ -81,6 +83,8 @@ def preprocess(
                     tar_ref.extract(tar_info, TEMP_IN_DIR)
     else:
         assert False, "input_images_filetype must be zip or tar"
+
+    #download_and_prep_training_data(input_zip_path, TEMP_IN_DIR)
 
     output_dir: str = TEMP_OUT_DIR
 
@@ -218,7 +222,9 @@ def case_insensitive_replace(text, target, replacement):
     return pattern.sub(replacement, text)
 
 import openai
-openai.api_key = "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"
+from dotenv import load_dotenv
+load_dotenv()  # This will load variables from .env file into the environment
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def cleanup_prompts_with_chatgpt(
     prompts, 
@@ -248,8 +254,6 @@ def cleanup_prompts_with_chatgpt(
         messages=[
                 #{"role": "system", "content": settings.system_description},
                 {"role": "user", "content": final_chatgpt_prompt},
-                #{"role": "assistant", "content": "..."},
-                #{"role": "user", "content": "..."}
             ], 
         #max_tokens=max_tokens,
     )
@@ -257,19 +261,7 @@ def cleanup_prompts_with_chatgpt(
 
     if verbose: # pretty print the full response json:
         print(gpt_completion)
-
-    """
-    Example response:
-
-    Concept Name: Simpson Banana
-    Rephrased Prompts:
-    - Simpson Banana is featured with a sign and a sticker.
-    - Simpson Banana is depicted holding a popcorn box.
-    - A Simpson Banana portrayed with a collar displaying a sad expression.
-    - Simpson Banana greets with the word "hello" against a black background.
-    - A smiling Simpson Banana is
-
-    """
+    
     # extract the Concept Name from the response:
     gpt_concept_name = ""
     for line in gpt_completion.split("\n"):

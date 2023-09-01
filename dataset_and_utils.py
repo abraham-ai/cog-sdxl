@@ -14,44 +14,6 @@ from safetensors.torch import save_file
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer, PretrainedConfig
 
-def make_validation_img_grid(img_folder):
-    """
-
-    find all the .jpg imgs in img_folder (template = *.jpg)
-    if >=4 validation imgs, create a 2x2 grid of them
-    otherwise just return the first validation img
-
-    """
-    
-    # Find all validation images
-    validation_imgs = [f for f in os.listdir(img_folder) if f.endswith(".jpg")]
-    validation_imgs.sort()
-
-    if len(validation_imgs) < 4:
-        # If less than 4 validation images, return path of the first one
-        return os.path.join(img_folder, validation_imgs[0])
-    else:
-        # If >= 4 validation images, create 2x2 grid
-        imgs = [Image.open(os.path.join(img_folder, img)) for img in validation_imgs[-4:]]
-
-        # Assuming all images are the same size, get dimensions of first image
-        width, height = imgs[0].size
-
-        # Create an empty image with 2x2 grid size
-        grid_img = Image.new("RGB", (2 * width, 2 * height))
-
-        # Paste the images into the grid
-        for i in range(2):
-            for j in range(2):
-                grid_img.paste(imgs.pop(0), (i * width, j * height))
-
-        # Save the new image
-        grid_img_path = os.path.join(img_folder, "validation_grid.jpg")
-        grid_img.save(grid_img_path)
-
-        return grid_img_path
-
-
 def prepare_image(
     pil_image: PIL.Image.Image, w: int = 512, h: int = 512
 ) -> torch.Tensor:
@@ -334,6 +296,10 @@ class TokenEmbeddingsHandler:
         self.embeddings_settings = {}
 
     def initialize_new_tokens(self, inserting_toks: List[str]):
+
+        print("Initializing new tokens...")
+        print(inserting_toks)
+
         idx = 0
         for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
             assert isinstance(
@@ -351,12 +317,15 @@ class TokenEmbeddingsHandler:
             self.train_ids = tokenizer.convert_tokens_to_ids(self.inserting_toks)
 
             # random initialization of new tokens
-
             std_token_embedding = (
                 text_encoder.text_model.embeddings.token_embedding.weight.data.std()
             )
+            std_token_mean = (  
+                text_encoder.text_model.embeddings.token_embedding.weight.data.mean()
+            )
 
-            print(f"{idx} text encodedr's std_token_embedding: {std_token_embedding}")
+            print(f"Text encoder {idx} token_embedding_std:  {std_token_embedding}")
+            print(f"Text encoder {idx} token_embedding_mean: {std_token_mean}")
 
             text_encoder.text_model.embeddings.token_embedding.weight.data[
                 self.train_ids
@@ -377,8 +346,6 @@ class TokenEmbeddingsHandler:
             inu[self.train_ids] = False
 
             self.embeddings_settings[f"index_no_updates_{idx}"] = inu
-
-            print(self.embeddings_settings[f"index_no_updates_{idx}"].shape)
 
             idx += 1
 
@@ -422,8 +389,11 @@ class TokenEmbeddingsHandler:
         ] = loaded_embeddings.to(device=self.device).to(dtype=self.dtype)
 
     @torch.no_grad()
-    def retract_embeddings(self):
-        for idx, text_encoder in enumerate(self.text_encoders):
+    def retract_embeddings(self, print_stds = False):
+        idx = 0
+        means, stds = [], []
+
+        for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
             index_no_updates = self.embeddings_settings[f"index_no_updates_{idx}"]
             text_encoder.text_model.embeddings.token_embedding.weight.data[
                 index_no_updates
@@ -449,6 +419,24 @@ class TokenEmbeddingsHandler:
             text_encoder.text_model.embeddings.token_embedding.weight.data[
                 index_updates
             ] = new_embeddings
+
+            idx += 1
+
+            # get the actual embeddings that will get updated:
+            inu = torch.ones((len(tokenizer),), dtype=torch.bool)
+            inu[self.train_ids] = False
+            updateable_embeddings = text_encoder.text_model.embeddings.token_embedding.weight.data[~inu].detach().clone().to(dtype=torch.float32).cpu().numpy()
+            
+            mean_0, mean_1 = updateable_embeddings[0].mean(), updateable_embeddings[1].mean()
+            std_0, std_1 = updateable_embeddings[0].std(), updateable_embeddings[1].std()
+
+            means.append((mean_0, mean_1))
+            stds.append((std_0, std_1))
+
+            if print_stds:
+                print(f"Text Encoder {idx} token embeddings:")
+                print(f" --- Means: ({mean_0:.6f}, {mean_1:.6f})")
+                print(f" --- Stds:  ({std_0:.6f}, {std_1:.6f})")
 
     def load_embeddings(self, file_path: str):
         with safe_open(file_path, framework="pt", device=self.device.type) as f:

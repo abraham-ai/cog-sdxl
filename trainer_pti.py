@@ -19,9 +19,10 @@ from dataset_and_utils import (
     PreprocessedDataset,
     TokenEmbeddingsHandler,
     load_models,
-    unet_attn_processors_state_dict,
-    make_validation_img_grid
+    unet_attn_processors_state_dict
 )
+
+from io_utils import make_validation_img_grid, download_and_prep_training_data
 
 from predict import SDXL_MODEL_CACHE
 from diffusers import StableDiffusionXLPipeline
@@ -84,7 +85,7 @@ def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, dev
     validation_prompts = [
             'a towering {} monument on a huge open square in a bustling city',
             'a mesmerizing oil painting portraying {} with ethereal lighting',
-            'a complex and delicate origami paper sculpture of {}',
+            'an origami paper sculpture of {}',
             'a vibrant low-poly artwork of {}, rendered in SVG, imbued with a sense of motion',
             '{} taking a shower, polaroid photograph',
             'a lifelike {} sand sculpture, complete with intricate details, standing tall on a sunny beach',
@@ -95,7 +96,7 @@ def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, dev
     random.seed(seed)
     validation_prompts = random.sample(validation_prompts, n_imgs)
     validation_prompts[0] = '{}'
-    
+
     torch.cuda.empty_cache()
 
     pipeline = StableDiffusionXLPipeline.from_pretrained(
@@ -107,15 +108,15 @@ def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, dev
     validation_prompts = [prepare_prompt_for_lora(prompt, token_map, trigger_prompt) for prompt in validation_prompts]
     generator = torch.Generator(device=device).manual_seed(0)
     pipeline_args = {
-                "prompt": validation_prompt,
                 "negative_prompt": "nude, naked, poorly drawn face, ugly, tiling, out of frame, extra limbs, disfigured, deformed body, blurry, blurred, watermark, text, grainy, signature, cut off, draft", 
                 "num_inference_steps": 35,
                 "guidance_scale": 7,
                 }
 
-    print(f"Rendering images for prompt: {validation_prompt}")
     with torch.cuda.amp.autocast():
         for i in range(n_imgs):
+            pipeline_args["prompt"] = validation_prompts[i]
+            print(f"Rendering validation img with prompt: {validation_prompts[i]}")
             image = pipeline(**pipeline_args, generator=generator).images[0]
             image.save(os.path.join(lora_path, f"img_{train_step:04d}_{i}.jpg"), format="JPEG", quality=95)
 
@@ -213,7 +214,6 @@ def main(
         for name, param in text_encoder.named_parameters():
             if "token_embedding" in name:
                 param.requires_grad = True
-                print(name)
                 text_encoder_parameters.append(param)
             else:
                 param.requires_grad = False
@@ -369,12 +369,13 @@ def main(
         if pivot_halfway:
             if epoch == num_train_epochs // 2:
                 print("# PTI :  Pivot halfway")
-                # remove text encoder parameters from optimizer
-                params_to_optimize = params_to_optimize[:1]
-                optimizer = torch.optim.AdamW(
-                    params_to_optimize,
-                    weight_decay=1e-4,
-                )
+                # remove text encoder parameters from the optimizer
+                optimizer.param_groups = params_to_optimize[:1]
+
+                # remove the optimizer state corresponding to text_encoder_parameters
+                for param in text_encoder_parameters:
+                    if param in optimizer.state:
+                        del optimizer.state[param]
 
         unet.train()
         for step, batch in enumerate(train_dataloader):
@@ -446,12 +447,10 @@ def main(
             lr_scheduler.step()
             optimizer.zero_grad()
 
-            # every step, we reset the embeddings to the original embeddings.
+            # every step, we reset the non-trainable embeddings to the original embeddings.
+            embedding_handler.retract_embeddings(print_stds = (global_step % 50 == 0))
 
-            for idx, text_encoder in enumerate(text_encoders):
-                embedding_handler.retract_embeddings()
-
-            if global_step % checkpointing_steps == 0:
+            if (global_step % checkpointing_steps == 0) and (global_step > 250):
                 # save the required params of unet with safetensor
                 print(f"Saving checkpoint at step.. {global_step}")
                 os.makedirs(f"{checkpoint_dir}/checkpoint-{global_step}", exist_ok=True)

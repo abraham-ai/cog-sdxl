@@ -26,8 +26,8 @@ hyperparameters = {
     'resolution': [768,1024],
     'ti_weight_decay': ['0.0', '1e-4', '1e-3'],
     'lora_weight_decay': ['0.0', '1e-5', '1e-4'],
-    'ti_lr': ['8e-5', '3e-4', '12e-4'], # decay over training run
-    'lora_lr': ['1e-4'],  # decay over training run
+    'ti_lr': ['8e-5', '3e-4', '12e-4'],
+    'lora_lr': ['1e-4'],
     'lora_rank': ['4'],
     'max_train_steps': ['1500'],
     'train_batch_size': ['2'],

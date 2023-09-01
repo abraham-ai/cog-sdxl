@@ -24,6 +24,7 @@ build:
     - "opencv-python>=4.1.0.25"
     - "mediapipe==0.10.2"
     - openai
+    - python-dotenv
 
   run:
     - curl -o /usr/local/bin/pget -L "https://github.com/replicate/pget/releases/download/v0.0.1/pget" && chmod +x /usr/local/bin/pget
@@ -31,3 +32,5 @@ build:
 
 predict: "predict.py:Predictor"
 train: "train.py:train"
+
+image: "r8.im/abraham-ai/eden-sdxl-lora-trainer"
