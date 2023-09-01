@@ -3,10 +3,11 @@ import fnmatch
 import json
 import math
 import os
+import random
 import shutil
+import numpy as np
 from typing import List, Optional
 
-import numpy as np
 import torch
 import torch.utils.checkpoint
 from diffusers.models.attention_processor import LoRAAttnProcessor, LoRAAttnProcessor2_0
@@ -19,7 +20,110 @@ from dataset_and_utils import (
     TokenEmbeddingsHandler,
     load_models,
     unet_attn_processors_state_dict,
+    make_validation_img_grid
 )
+
+from predict import SDXL_MODEL_CACHE
+from diffusers import StableDiffusionXLPipeline
+from safetensors.torch import load_file
+
+def patch_pipe_with_lora(pipe, lora_path, lora_scale):
+    with open(os.path.join(lora_path, "special_params.json"), "r") as f:
+        lora_token_map = json.load(f)
+
+    with open(os.path.join(lora_path, "training_args.json"), "r") as f:
+        training_args = json.load(f)
+        lora_rank      = training_args["lora_rank"]
+        trigger_prompt = training_args["trigger_text"]
+    
+    unet = pipe.unet
+    tensors = load_file(os.path.join(lora_path, "lora.safetensors"))
+    unet_lora_attn_procs = {}
+
+    for name, attn_processor in unet.attn_processors.items():
+        cross_attention_dim = (
+            None
+            if name.endswith("attn1.processor")
+            else unet.config.cross_attention_dim
+        )
+        if name.startswith("mid_block"):
+            hidden_size = unet.config.block_out_channels[-1]
+        elif name.startswith("up_blocks"):
+            block_id = int(name[len("up_blocks.")])
+            hidden_size = list(reversed(unet.config.block_out_channels))[
+                block_id
+            ]
+        elif name.startswith("down_blocks"):
+            block_id = int(name[len("down_blocks.")])
+            hidden_size = unet.config.block_out_channels[block_id]
+
+        module = LoRAAttnProcessor2_0(
+            hidden_size=hidden_size,
+            cross_attention_dim=cross_attention_dim,
+            rank=lora_rank,
+        )
+        unet_lora_attn_procs[name] = module.to("cuda")
+
+    unet.set_attn_processor(unet_lora_attn_procs)
+    unet.load_state_dict(tensors, strict=False)
+    handler = TokenEmbeddingsHandler([pipe.text_encoder, pipe.text_encoder_2], [pipe.tokenizer, pipe.tokenizer_2])
+    handler.load_embeddings(os.path.join(lora_path, "embeddings.pti"))
+    return pipe, lora_token_map, trigger_prompt
+
+def prepare_prompt_for_lora(prompt, token_map, trigger_text):
+    prompt = prompt.format(trigger_text)
+    for k, v in token_map.items():
+        if k in prompt:
+            print(f"replacing {k} with {v} in validation_prompt")
+            prompt = prompt.replace(k, v)
+
+    return prompt
+
+@torch.no_grad()
+def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, device = "cuda:0"):
+    validation_prompts = [
+            'a towering {} monument on a huge open square in a bustling city',
+            'a mesmerizing oil painting portraying {} with ethereal lighting',
+            'a complex and delicate origami paper sculpture of {}',
+            'a vibrant low-poly artwork of {}, rendered in SVG, imbued with a sense of motion',
+            '{} taking a shower, polaroid photograph',
+            'a lifelike {} sand sculpture, complete with intricate details, standing tall on a sunny beach',
+            '{} immortalized as an exquisite marble statue with masterful chiseling, patterns and textures',
+            'a colorful and dynamic {} mural sprawling across the side of a building in a city pulsing with life',
+    ]
+
+    random.seed(seed)
+    validation_prompts = random.sample(validation_prompts, n_imgs)
+    validation_prompts[0] = '{}'
+    
+    torch.cuda.empty_cache()
+
+    pipeline = StableDiffusionXLPipeline.from_pretrained(
+        SDXL_MODEL_CACHE, torch_dtype=torch.float16
+    )
+    pipeline = pipeline.to(device)
+    pipeline, token_map, trigger_prompt = patch_pipe_with_lora(pipeline, lora_path, lora_scale)
+
+    validation_prompts = [prepare_prompt_for_lora(prompt, token_map, trigger_prompt) for prompt in validation_prompts]
+    generator = torch.Generator(device=device).manual_seed(0)
+    pipeline_args = {
+                "prompt": validation_prompt,
+                "negative_prompt": "nude, naked, poorly drawn face, ugly, tiling, out of frame, extra limbs, disfigured, deformed body, blurry, blurred, watermark, text, grainy, signature, cut off, draft", 
+                "num_inference_steps": 35,
+                "guidance_scale": 7,
+                }
+
+    print(f"Rendering images for prompt: {validation_prompt}")
+    with torch.cuda.amp.autocast():
+        for i in range(n_imgs):
+            image = pipeline(**pipeline_args, generator=generator).images[0]
+            image.save(os.path.join(lora_path, f"img_{train_step:04d}_{i}.jpg"), format="JPEG", quality=95)
+
+    # create img_grid:
+    img_grid_path = make_validation_img_grid(lora_path)
+
+    del pipeline
+    torch.cuda.empty_cache()
 
 
 def main(
@@ -29,7 +133,7 @@ def main(
     revision: Optional[str] = None,
     instance_data_dir: Optional[str] = "./dataset/zeke/captions.csv",
     output_dir: str = "ft_masked_coke",
-    seed: Optional[int] = 42,
+    seed: Optional[int] = random.randint(0, 2**32 - 1),
     resolution: int = 512,
     crops_coords_top_left_h: int = 0,
     crops_coords_top_left_w: int = 0,
@@ -42,6 +146,8 @@ def main(
     unet_learning_rate: float = 1e-5,
     ti_lr: float = 3e-4,
     lora_lr: float = 1e-4,
+    weight_decay_lora: float = 1e-4,
+    weight_decay_ti: float = 1e-3,
     pivot_halfway: bool = True,
     scale_lr: bool = False,
     lr_scheduler: str = "constant",
@@ -58,6 +164,7 @@ def main(
     verbose: bool = True,
     is_lora: bool = True,
     lora_rank: int = 32,
+    args_dict: dict = {},
 ) -> None:
     if allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -141,7 +248,7 @@ def main(
             {
                 "params": text_encoder_parameters,
                 "lr": ti_lr,
-                "weight_decay": 1e-3,
+                "weight_decay": weight_decay_ti,
             },
         ]
 
@@ -180,17 +287,18 @@ def main(
             {
                 "params": unet_lora_parameters,
                 "lr": lora_lr,
+                "weight_decay": weight_decay_lora,
             },
             {
                 "params": text_encoder_parameters,
                 "lr": ti_lr,
-                "weight_decay": 1e-3,
+                "weight_decay": weight_decay_ti,
             },
         ]
 
     optimizer = torch.optim.AdamW(
         params_to_optimize,
-        weight_decay=1e-4,
+        weight_decay=1e-4, # this wd doesn't matter, I think
     )
 
     print(f"# PTI : Loading dataset, do_cache {do_cache}")
@@ -252,12 +360,10 @@ def main(
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, max_train_steps))
-    checkpoint_dir = "checkpoint"
+    checkpoint_dir = os.path.join(str(output_dir), "checkpoints")
     if os.path.exists(checkpoint_dir):
         shutil.rmtree(checkpoint_dir)
-
-    os.makedirs(f"{checkpoint_dir}/unet", exist_ok=True)
-    os.makedirs(f"{checkpoint_dir}/embeddings", exist_ok=True)
+    os.makedirs(f"{checkpoint_dir}")
 
     for epoch in range(first_epoch, num_train_epochs):
         if pivot_halfway:
@@ -347,6 +453,8 @@ def main(
 
             if global_step % checkpointing_steps == 0:
                 # save the required params of unet with safetensor
+                print(f"Saving checkpoint at step.. {global_step}")
+                os.makedirs(f"{checkpoint_dir}/checkpoint-{global_step}", exist_ok=True)
 
                 if not is_lora:
                     tensors = {
@@ -356,7 +464,7 @@ def main(
                     }
                     save_file(
                         tensors,
-                        f"{checkpoint_dir}/unet/checkpoint-{global_step}.unet.safetensors",
+                        f"{checkpoint_dir}/checkpoint-{global_step}/unet.safetensors",
                     )
 
                 else:
@@ -364,12 +472,19 @@ def main(
 
                     save_file(
                         lora_tensors,
-                        f"{checkpoint_dir}/unet/checkpoint-{global_step}.lora.safetensors",
+                        f"{checkpoint_dir}/checkpoint-{global_step}/lora.safetensors",
                     )
 
                 embedding_handler.save_embeddings(
-                    f"{checkpoint_dir}/embeddings/checkpoint-{global_step}.pti",
+                    f"{checkpoint_dir}/checkpoint-{global_step}/embeddings.pti",
                 )
+
+                with open(f"{checkpoint_dir}/checkpoint-{global_step}/special_params.json", "w") as f:
+                    json.dump(token_dict, f)
+                with open(f"{checkpoint_dir}/checkpoint-{global_step}/training_args.json", "w") as f:
+                    json.dump(args_dict, f, indent=4)
+
+                render_images(f"{checkpoint_dir}/checkpoint-{global_step}", global_step, seed)
 
     # final_save
     print("Saving final model for return")
@@ -397,6 +512,8 @@ def main(
     to_save = token_dict
     with open(f"{output_dir}/special_params.json", "w") as f:
         json.dump(to_save, f)
+    with open(f"{output_dir}/training_args.json", "w") as f:
+        json.dump(args_dict, f, indent=4)
 
 
 if __name__ == "__main__":

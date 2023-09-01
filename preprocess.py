@@ -30,11 +30,9 @@ from transformers import (
 )
 
 MODEL_PATH = "./cache"
-TEMP_OUT_DIR = "./temp/"
-TEMP_IN_DIR = "./temp_in/"
-
 
 def preprocess(
+    working_directory,
     input_images_filetype: str,
     input_zip_path: Path,
     caption_text: str,
@@ -44,10 +42,13 @@ def preprocess(
     use_face_detection_instead: bool,
     temp: float,
     substitution_tokens: List[str],
+    left_right_flip_augmentation: bool = False,
 ) -> Path:
     # assert str(files).endswith(".zip"), "files must be a zip file"
 
     # clear TEMP_IN_DIR first.
+    TEMP_IN_DIR = os.path.join(working_directory,  "images_in")
+    TEMP_OUT_DIR = os.path.join(working_directory, "images_out")
 
     for path in [TEMP_OUT_DIR, TEMP_IN_DIR]:
         if os.path.exists(path):
@@ -83,7 +84,7 @@ def preprocess(
 
     output_dir: str = TEMP_OUT_DIR
 
-    load_and_save_masks_and_captions(
+    n_training_imgs, trigger_text, segmentation_prompt = load_and_save_masks_and_captions(
         files=TEMP_IN_DIR,
         output_dir=output_dir,
         caption_text=caption_text,
@@ -93,9 +94,10 @@ def preprocess(
         use_face_detection_instead=use_face_detection_instead,
         temp=temp,
         substitution_tokens=substitution_tokens,
+        add_lr_flips = left_right_flip_augmentation,
     )
 
-    return Path(TEMP_OUT_DIR)
+    return Path(TEMP_OUT_DIR), n_training_imgs, trigger_text, segmentation_prompt
 
 
 @torch.no_grad()
@@ -208,10 +210,90 @@ def clipseg_mask_generator(
     return masks
 
 
+import re
+
+# Define a function for case-insensitive text replacement
+def case_insensitive_replace(text, target, replacement):
+    pattern = re.compile(re.escape(target), re.IGNORECASE)
+    return pattern.sub(replacement, text)
+
+import openai
+openai.api_key = "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"
+
+def cleanup_prompts_with_chatgpt(
+    prompts, 
+    max_tokens = 70,
+    chatgpt_mode = "chat-completion",
+    verbose = True):
+
+    chat_gpt_prompt_1 = """
+        I have a set of images, each containing the same concept / figure / person. I've used an img2txt model to automatically create a description for each image:
+        """
+    
+    chat_gpt_prompt_2 = """
+            I need to fix these descriptions so they sound natural and each one contains the name or fixed description [Concept Name] of the concept. I want you to:
+            1. Find a good, short name/description of the concept to be learned (1-5 words). This [Concept Name] is likely already present in the auto-captions above, pick the most obvious name or words to describe the concept that's depicted in all the images.
+            2. Insert the [Concept Name] (also prepend "TOK, ") into the descriptions above by rephrasing them where needed to naturally contain the string "TOK, [Concept Name]" while keeping as much of the description as possible.
+
+            Reply by first stating the "Concept Name:", then a bullet point list of all the adjusted "Descriptions:".
+        """
+
+    final_chatgpt_prompt = chat_gpt_prompt_1 + "\n- " + "\n- ".join(prompts) + "\n\n" + chat_gpt_prompt_2
+    print("Final chatgpt prompt:")
+    print(final_chatgpt_prompt)
+
+    response = openai.ChatCompletion.create(
+        #model="gpt-3.5-turbo",
+        model="gpt-4",
+        messages=[
+                #{"role": "system", "content": settings.system_description},
+                {"role": "user", "content": final_chatgpt_prompt},
+                #{"role": "assistant", "content": "..."},
+                #{"role": "user", "content": "..."}
+            ], 
+        #max_tokens=max_tokens,
+    )
+    gpt_completion = response.choices[0].message.content
+
+    if verbose: # pretty print the full response json:
+        print(gpt_completion)
+
+    """
+    Example response:
+
+    Concept Name: Simpson Banana
+    Rephrased Prompts:
+    - Simpson Banana is featured with a sign and a sticker.
+    - Simpson Banana is depicted holding a popcorn box.
+    - A Simpson Banana portrayed with a collar displaying a sad expression.
+    - Simpson Banana greets with the word "hello" against a black background.
+    - A smiling Simpson Banana is
+
+    """
+    # extract the Concept Name from the response:
+    gpt_concept_name = ""
+    for line in gpt_completion.split("\n"):
+        if line.startswith("Concept Name:"):
+            gpt_concept_name = line[14:]
+            break
+
+    # extract the final rephrased prompts from the response:
+    prompts = []
+    for line in gpt_completion.split("\n"):
+        if line.startswith("-"):
+            prompts.append(line[2:])
+
+    # finally, prepend "TOK" to the Concept Name in each prompt:
+    trigger_text = "TOK, " + gpt_concept_name
+    #prompts = [case_insensitive_replace(prompt, gpt_concept_name, trigger_text) for prompt in prompts]
+
+    return prompts, gpt_concept_name, trigger_text
+
+
 @torch.no_grad()
 def blip_captioning_dataset(
     images: List[Image.Image],
-    text: Optional[str] = None,
+    text: Optional[str] = None,  # caption_prefix="a cartoon of TOK, the yellow bananaman figure, " 
     model_id: Literal[
         "Salesforce/blip-image-captioning-large",
         "Salesforce/blip-image-captioning-base",
@@ -229,7 +311,10 @@ def blip_captioning_dataset(
     ).to(device)
     captions = []
     text = text.strip()
+
     print(f"Input captioning text: {text}")
+    print("Substitution tokens:", substitution_tokens)
+
     for image in tqdm(images):
         inputs = processor(image, return_tensors="pt").to("cuda")
         out = model.generate(
@@ -239,15 +324,41 @@ def blip_captioning_dataset(
 
         # BLIP 2 lowercases all caps tokens. This should properly replace them w/o messing up subwords. I'm sure there's a better way to do this.
         for token in substitution_tokens:
-            print(token)
             sub_cap = " " + caption + " "
-            print(sub_cap)
             sub_cap = sub_cap.replace(" " + token.lower() + " ", " " + token + " ")
             caption = sub_cap.strip()
 
-        captions.append(text + " " + caption)
-    print("Generated captions", captions)
-    return captions
+        print(caption)
+        captions.append(caption)
+
+    if len(captions)>2 and len(captions)<40 and (len(text) == 0):
+        # use chatgpt to auto-find a good trigger text and insert it naturally into the prompts:
+        retry_count = 0
+        while retry_count < 4:
+            try:
+                captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions)
+                break
+            except Exception as e:
+                retry_count += 1
+                print(f"An error occurred after try {retry_count}: {e}")
+                time.sleep(1)
+        else:
+            gpt_concept_name, trigger_text = None, text
+    else:
+        if len(text) == 0:
+            print("WARNING: no captioning text was given and there's too few/many prompts to do chatgpt cleanup...")
+
+        # manually add the trigger_text:
+        trigger_text = text
+        captions = [trigger_text + " " + caption for caption in captions]
+        gpt_concept_name = None
+
+    print("----------------------------------")
+    print("Final training captions:")
+    for caption in captions:
+        print(caption)
+
+    return captions, trigger_text, gpt_concept_name
 
 
 def face_mask_google_mediapipe(
@@ -424,9 +535,39 @@ def _center_of_mass(mask: Image.Image):
     return x, y
 
 
+def load_image_with_orientation(path, mode = "RGB"):
+    image = Image.open(path)
+
+    # Try to get the Exif orientation tag (0x0112), if it exists
+    try:
+        exif_data = image._getexif()
+        orientation = exif_data.get(0x0112)
+    except (AttributeError, KeyError, IndexError):
+        orientation = None
+
+    # Apply the orientation, if it's present
+    if orientation:
+        if orientation == 2:
+            image = image.transpose(Image.FLIP_LEFT_RIGHT)
+        elif orientation == 3:
+            image = image.rotate(180)
+        elif orientation == 4:
+            image = image.transpose(Image.FLIP_TOP_BOTTOM)
+        elif orientation == 5:
+            image = image.rotate(-90).transpose(Image.FLIP_LEFT_RIGHT)
+        elif orientation == 6:
+            image = image.rotate(-90)
+        elif orientation == 7:
+            image = image.rotate(90).transpose(Image.FLIP_LEFT_RIGHT)
+        elif orientation == 8:
+            image = image.rotate(90)
+
+    return image.convert(mode)
+
+
 def load_and_save_masks_and_captions(
     files: Union[str, List[str]],
-    output_dir: str = TEMP_OUT_DIR,
+    output_dir: str = "tmp_out",
     caption_text: Optional[str] = None,
     mask_target_prompts: Optional[Union[List[str], str]] = None,
     target_size: int = 1024,
@@ -435,6 +576,7 @@ def load_and_save_masks_and_captions(
     temp: float = 1.0,
     n_length: int = -1,
     substitution_tokens: Optional[List[str]] = None,
+    add_lr_flips: bool = False,
 ):
     """
     Loads images from the given files, generates masks for them, and saves the masks and captions and upscale images
@@ -474,15 +616,26 @@ def load_and_save_masks_and_captions(
             n_length = len(files)
         files = sorted(files)[:n_length]
         print(files)
-    images = [Image.open(file).convert("RGB") for file in files]
+        
+    images = [load_image_with_orientation(file) for file in files]
+    n_training_imgs = len(images)
+
+    if add_lr_flips:
+        print(f"Adding LR flips... (doubling the number of images from {n_training_imgs} to {n_training_imgs*2})")
+        images = images + [image.transpose(Image.FLIP_LEFT_RIGHT) for image in images]
 
     # captions
     print(f"Generating {len(images)} captions...")
-    captions = blip_captioning_dataset(
+    captions, trigger_text, gpt_concept_name = blip_captioning_dataset(
         images, text=caption_text, substitution_tokens=substitution_tokens
     )
 
+    if gpt_concept_name is not None and ((mask_target_prompts is None) or (mask_target_prompts == "")):
+        print(f"Using GPT concept name as CLIP-segmentation prompt: {gpt_concept_name}")
+        mask_target_prompts = gpt_concept_name
+
     if mask_target_prompts is None:
+        print("Disabling CLIP-segmentation")
         mask_target_prompts = ""
         temp = 999
 
@@ -492,6 +645,9 @@ def load_and_save_masks_and_captions(
             images=images, target_prompts=mask_target_prompts, temp=temp
         )
     else:
+        mask_target_prompts = "FACE detection was used"
+        if add_lr_flips:
+            print("WARNING you are applying face detection while also doing left-right flips, this might not be what you intended?")
         seg_masks = face_mask_google_mediapipe(images=images)
 
     # find the center of mass of the mask
@@ -505,8 +661,26 @@ def load_and_save_masks_and_captions(
     ]
 
     print(f"Upscaling {len(images)} images...")
-    # upscale images anyways
-    images = swin_ir_sr(images, target_size=(target_size, target_size))
+
+    if 0:
+        # upscale all images:
+        images = swin_ir_sr(images, target_size=(target_size, target_size))
+    else:
+        # upscale images that are smaller than target_size:
+        images_to_upscale = []
+        indices_to_replace = []
+        for idx, image in enumerate(images):
+            width, height = image.size
+            if width < target_size or height < target_size:
+                images_to_upscale.append(image)
+                indices_to_replace.append(idx)
+                
+        upscaled_images = swin_ir_sr(images_to_upscale, target_size=(target_size, target_size))
+        
+        for i, idx in enumerate(indices_to_replace):
+            images[idx] = upscaled_images[i]
+
+
     images = [
         image.resize((target_size, target_size), Image.Resampling.LANCZOS)
         for image in images
@@ -532,8 +706,8 @@ def load_and_save_masks_and_captions(
         mask_file = f"{idx}.mask.png"
 
         # save the image and mask files
-        image.save(output_dir + image_name)
-        mask.save(output_dir + mask_file)
+        image.save(os.path.join(output_dir, image_name))
+        mask.save(os.path.join(output_dir, mask_file))
 
         # add a new row to the dataframe with the file names and caption
         data.append(
@@ -543,6 +717,8 @@ def load_and_save_masks_and_captions(
     df = pd.DataFrame(columns=["image_path", "mask_path", "caption"], data=data)
     # save the dataframe to a CSV file
     df.to_csv(os.path.join(output_dir, "captions.csv"), index=False)
+
+    return n_training_imgs, trigger_text, mask_target_prompts
 
 
 def _find_files(pattern, dir="."):

@@ -1,6 +1,7 @@
 import os
 from typing import Dict, List, Optional, Tuple
 
+import random
 import numpy as np
 import pandas as pd
 import PIL
@@ -12,6 +13,43 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer, PretrainedConfig
+
+def make_validation_img_grid(img_folder):
+    """
+
+    find all the .jpg imgs in img_folder (template = *.jpg)
+    if >=4 validation imgs, create a 2x2 grid of them
+    otherwise just return the first validation img
+
+    """
+    
+    # Find all validation images
+    validation_imgs = [f for f in os.listdir(img_folder) if f.endswith(".jpg")]
+    validation_imgs.sort()
+
+    if len(validation_imgs) < 4:
+        # If less than 4 validation images, return path of the first one
+        return os.path.join(img_folder, validation_imgs[0])
+    else:
+        # If >= 4 validation images, create 2x2 grid
+        imgs = [Image.open(os.path.join(img_folder, img)) for img in validation_imgs[-4:]]
+
+        # Assuming all images are the same size, get dimensions of first image
+        width, height = imgs[0].size
+
+        # Create an empty image with 2x2 grid size
+        grid_img = Image.new("RGB", (2 * width, 2 * height))
+
+        # Paste the images into the grid
+        for i in range(2):
+            for j in range(2):
+                grid_img.paste(imgs.pop(0), (i * width, j * height))
+
+        # Save the new image
+        grid_img_path = os.path.join(img_folder, "validation_grid.jpg")
+        grid_img.save(grid_img_path)
+
+        return grid_img_path
 
 
 def prepare_image(
@@ -52,7 +90,6 @@ class PreprocessedDataset(Dataset):
         substitute_caption_map: Dict[str, str] = {},
     ):
         super().__init__()
-
         self.data = pd.read_csv(csv_path)
         self.csv_path = csv_path
 
@@ -85,7 +122,6 @@ class PreprocessedDataset(Dataset):
         self.vae_encoder = vae_encoder
         self.scale_vae_latents = scale_vae_latents
         self.text_dropout = text_dropout
-
         self.size = size
 
         if do_cache:
@@ -102,6 +138,8 @@ class PreprocessedDataset(Dataset):
                 self.tokens_tuple.append(token)
                 self.masks.append(mask)
 
+            print(f"Cached latents and masks for {len(self.vae_latents)} images.")
+
             del self.vae_encoder
 
         else:
@@ -115,12 +153,12 @@ class PreprocessedDataset(Dataset):
         image_path = os.path.join(os.path.dirname(self.csv_path), image_path)
 
         image = PIL.Image.open(image_path).convert("RGB")
+
         image = prepare_image(image, self.size, self.size).to(
             dtype=self.vae_encoder.dtype, device=self.vae_encoder.device
         )
 
         caption = self.caption[idx]
-
         print(caption)
 
         # tokenizer_1
@@ -157,6 +195,7 @@ class PreprocessedDataset(Dataset):
             mask_path = os.path.join(os.path.dirname(self.csv_path), mask_path)
 
             mask = PIL.Image.open(mask_path)
+
             mask = prepare_mask(mask, self.size, self.size).to(
                 dtype=self.vae_encoder.dtype, device=self.vae_encoder.device
             )
