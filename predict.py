@@ -46,11 +46,11 @@ class Predictor(BasePredictor):
             default=None
         ),
         lora_training_urls: str = Input(
-            description="Training images for new LORA concept (can be images or a .zip file of images)", 
+            description="Training images for new LORA concept (can be image urls or a .zip file of images)", 
             default=None
         ),
-        mode: bool = Input(
-            description="face / style or concept (default)",
+        mode: str = Input(
+            description=" 'face' / 'style' / 'concept' (default)",
             default="concept",
         ),
         seed: int = Input(
@@ -58,7 +58,7 @@ class Predictor(BasePredictor):
             default=None,
         ),
         resolution: int = Input(
-            description="Square pixel resolution which your images will be resized to for training",
+            description="Square pixel resolution which your images will be resized to for training recommended [768-1024]",
             default=896,
         ),
         train_batch_size: int = Input(
@@ -86,15 +86,15 @@ class Predictor(BasePredictor):
             default=True,
         ),
         unet_learning_rate: float = Input(
-            description="Learning rate for the U-Net. We recommend this value to be somewhere between `1e-6` to `1e-5`.",
+            description="Learning rate for the U-Net (only used for full finetuning, not for LORA's). Recommended between `1e-6` to `1e-5`.",
             default=1e-6,
         ),
         ti_lr: float = Input(
-            description="Scaling of learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
+            description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
             default=3e-4,
         ),
         lora_lr: float = Input(
-            description="Scaling of learning rate for training LoRA embeddings. Don't alter unless you know what you're doing.",
+            description="Learning rate for training LoRA matrices. Don't alter unless you know what you're doing.",
             default=1e-4,
         ),
         ti_weight_decay: float = Input(
@@ -106,7 +106,7 @@ class Predictor(BasePredictor):
             default=1e-4,
         ),
         lora_rank: int = Input(
-            description="Rank of LoRA embeddings. For faces 4 is good, for complex objects you might try 6 or 8",
+            description="Rank of LoRA embeddings. For faces 4 is good, for complex concepts you can try 6 or 8",
             default=4,
         ),
         lr_scheduler: str = Input(
@@ -130,11 +130,15 @@ class Predictor(BasePredictor):
         #     default="TOK:2",
         # ),
         caption_prefix: str = Input(
-            description="Text which will be used as prefix during automatic captioning. Must contain the `token_string`. For example, if caption text is 'a photo of TOK', automatic captioning will expand to 'a photo of TOK under a bridge', 'a photo of TOK holding a cup', etc.",
-            default="a photo of TOK, ",
+            description="Prefix text prepended to automatic captioning. Must contain the `token_string`. Example is 'a photo of TOK, '.  If empty, chatgpt will take care of this automatically",
+            default="",
+        ),
+        left_right_flip_augmentation: bool = Input(
+            description="Add left-right flipped version of each img to the training data, recommended for most cases. If you are learning a face, you prob want to disable this",
+            default=True,
         ),
         mask_target_prompts: str = Input(
-            description="Prompt that describes part of the image that you will find important. For example, if you are fine-tuning your pet, `photo of a dog` will be a good prompt. Prompt-based masking is used to focus the fine-tuning process on the important/salient parts of the image",
+            description="Prompt that describes most important part of the image, will be used for CLIP-segmentation. For example, if you are learning a person 'face' would be a good segmentation prompt",
             default=None,
         ),
         crop_based_on_salience: bool = Input(
@@ -148,10 +152,6 @@ class Predictor(BasePredictor):
         clipseg_temperature: float = Input(
             description="How blurry you want the CLIPSeg mask to be. We recommend this value be something between `0.5` to `1.0`. If you want to have more sharp mask (but thus more errorful), you can decrease this value.",
             default=1.0,
-        ),
-        left_right_flip_augmentation: bool = Input(
-            description="Add left-right flipped version of each img to the training data, recommended for most cases. If you are learning a face, you prob want to disable this",
-            default=True,
         ),
         verbose: bool = Input(description="verbose output", default=True),
         run_name: str = Input(

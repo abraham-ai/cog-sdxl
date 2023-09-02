@@ -218,17 +218,10 @@ def clipseg_mask_generator(
 
     return masks
 
-
 import re
-
-# Define a function for case-insensitive text replacement
-def case_insensitive_replace(text, target, replacement):
-    pattern = re.compile(re.escape(target), re.IGNORECASE)
-    return pattern.sub(replacement, text)
-
 import openai
 from dotenv import load_dotenv
-load_dotenv()  # This will load variables from .env file into the environment
+load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def cleanup_prompts_with_chatgpt(
