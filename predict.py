@@ -91,11 +91,11 @@ class Predictor(BasePredictor):
         ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
-            default=3e-4,
+            default=5e-4,
         ),
         lora_lr: float = Input(
             description="Learning rate for training LoRA matrices. Don't alter unless you know what you're doing.",
-            default=1e-4,
+            default=3e-4,
         ),
         ti_weight_decay: float = Input(
             description="weight decay for textual inversion embeddings. Don't alter unless you know what you're doing.",
@@ -103,7 +103,7 @@ class Predictor(BasePredictor):
         ),
         lora_weight_decay: float = Input(
             description="weight decay for LoRa. Don't alter unless you know what you're doing.",
-            default=1e-4,
+            default=3e-4,
         ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 4 is good, for complex concepts you can try 6 or 8",
@@ -159,7 +159,7 @@ class Predictor(BasePredictor):
             default=str(int(time.time())),
         ),
         run_local: bool = Input(
-            description="for debugging locally",
+            description="for debugging locally only (dont activate this on replicate)",
             default=False,
         ),
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
