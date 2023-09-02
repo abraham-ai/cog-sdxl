@@ -23,7 +23,9 @@ from PIL import Image, ImageFilter
 from tqdm import tqdm
 from transformers import (
     BlipForConditionalGeneration,
+    Blip2ForConditionalGeneration,
     BlipProcessor,
+    Blip2Processor,
     CLIPSegForImageSegmentation,
     CLIPSegProcessor,
     Swin2SRForImageSuperResolution,
@@ -36,7 +38,7 @@ from io_utils import download_and_prep_training_data
 
 def preprocess(
     working_directory,
-    input_images_filetype: str,
+    mode, 
     input_zip_path: Path,
     caption_text: str,
     mask_target_prompts: str,
@@ -57,6 +59,7 @@ def preprocess(
             shutil.rmtree(path)
         os.makedirs(path)
 
+    """
     if input_images_filetype == "zip" or str(input_zip_path).endswith(".zip"):
         with ZipFile(str(input_zip_path), "r") as zip_ref:
             for zip_info in zip_ref.infolist():
@@ -83,12 +86,14 @@ def preprocess(
                     tar_ref.extract(tar_info, TEMP_IN_DIR)
     else:
         assert False, "input_images_filetype must be zip or tar"
+    """
 
-    #download_and_prep_training_data(input_zip_path, TEMP_IN_DIR)
+    download_and_prep_training_data(input_zip_path, TEMP_IN_DIR)
 
     output_dir: str = TEMP_OUT_DIR
 
     n_training_imgs, trigger_text, segmentation_prompt = load_and_save_masks_and_captions(
+        mode, 
         files=TEMP_IN_DIR,
         output_dir=output_dir,
         caption_text=caption_text,
@@ -228,21 +233,35 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def cleanup_prompts_with_chatgpt(
     prompts, 
-    max_tokens = 70,
+    mode,    # face / concept / style
     chatgpt_mode = "chat-completion",
     verbose = True):
 
-    chat_gpt_prompt_1 = """
-        I have a set of images, each containing the same concept / figure / person. I've used an img2txt model to automatically create a description for each image:
-        """
-    
-    chat_gpt_prompt_2 = """
-            I need to fix these descriptions so they sound natural and each one contains the name or fixed description [Concept Name] of the concept. I want you to:
-            1. Find a good, short name/description of the concept to be learned (1-5 words). This [Concept Name] is likely already present in the auto-captions above, pick the most obvious name or words to describe the concept that's depicted in all the images.
-            2. Insert the [Concept Name] (also prepend "TOK, ") into the descriptions above by rephrasing them where needed to naturally contain the string "TOK, [Concept Name]" while keeping as much of the description as possible.
+    if mode == "concept":
+        chat_gpt_prompt_1 = """
+            I have a set of images, each containing the same concept / figure. I have the following (poor) descriptions for each image:
+            """
+        
+        chat_gpt_prompt_2 = """
+            I want you to:
+            1. Find a good, short name/description of the single central concept that's in all the images. This [Concept Name] is likely already present in the descriptions above, pick the most obvious name or words to describe it.
+            2. Insert the text "TOK, [Concept Name]" into all the descriptions above by rephrasing them where needed to naturally contain the text TOK, [Concept Name] while keeping as much of the description as possible.
 
-            Reply by first stating the "Concept Name:", then a bullet point list of all the adjusted "Descriptions:".
-        """
+            Reply by first stating the "Concept Name:", followed by a bullet point list of all the adjusted "Descriptions:".
+            """
+    elif mode == "face":
+        chat_gpt_prompt_1 = """
+            I have a set of images, each containing a photo of a single person named TOK. I have the following (poor) descriptions for each image:
+            """
+        
+        chat_gpt_prompt_2 = """
+            I need you to rewrite these descriptions so that:
+            - there are no references to other people (there's only one person in each picture)
+            - each description contains the words "a photo of TOK" somewhere naturally in the sentence
+            Make sure to insert the name TOK into each description, rephrasing where needed while keeping as much of the description as possible.
+
+            Reply by first stating the "Concept Name: TOK", followed by a bullet point list of all the adjusted "Descriptions:".
+            """
 
     final_chatgpt_prompt = chat_gpt_prompt_1 + "\n- " + "\n- ".join(prompts) + "\n\n" + chat_gpt_prompt_2
     print("Final chatgpt prompt:")
@@ -252,32 +271,30 @@ def cleanup_prompts_with_chatgpt(
         #model="gpt-3.5-turbo",
         model="gpt-4",
         messages=[
-                #{"role": "system", "content": settings.system_description},
                 {"role": "user", "content": final_chatgpt_prompt},
             ], 
-        #max_tokens=max_tokens,
     )
     gpt_completion = response.choices[0].message.content
 
     if verbose: # pretty print the full response json:
         print(gpt_completion)
     
-    # extract the Concept Name from the response:
-    gpt_concept_name = ""
-    for line in gpt_completion.split("\n"):
-        if line.startswith("Concept Name:"):
-            gpt_concept_name = line[14:]
-            break
-
     # extract the final rephrased prompts from the response:
     prompts = []
     for line in gpt_completion.split("\n"):
         if line.startswith("-"):
             prompts.append(line[2:])
 
-    # finally, prepend "TOK" to the Concept Name in each prompt:
-    trigger_text = "TOK, " + gpt_concept_name
-    #prompts = [case_insensitive_replace(prompt, gpt_concept_name, trigger_text) for prompt in prompts]
+    if mode == 'face':
+        gpt_concept_name = "face"
+        trigger_text = "TOK"
+    elif mode == 'concept':
+        # extract the Concept Name from the response:
+        for line in gpt_completion.split("\n"):
+            if line.startswith("Concept Name:"):
+                gpt_concept_name = line[14:]
+                break
+        trigger_text = "TOK, " + gpt_concept_name
 
     return prompts, gpt_concept_name, trigger_text
 
@@ -285,6 +302,7 @@ def cleanup_prompts_with_chatgpt(
 @torch.no_grad()
 def blip_captioning_dataset(
     images: List[Image.Image],
+    mode: str,  # face / concept / style
     text: Optional[str] = None,  # caption_prefix="a cartoon of TOK, the yellow bananaman figure, " 
     model_id: Literal[
         "Salesforce/blip-image-captioning-large",
@@ -292,15 +310,20 @@ def blip_captioning_dataset(
     ] = "Salesforce/blip-image-captioning-large",
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     substitution_tokens: Optional[List[str]] = None,
+    n_samples_per_img: int = 1,
     **kwargs,
 ) -> List[str]:
     """
     Returns a list of captions for the given images
+    TODO, try BLIP2: https://huggingface.co/docs/transformers/main/model_doc/blip-2#transformers.Blip2ForConditionalGeneration.forward.example-2
     """
+
     processor = BlipProcessor.from_pretrained(model_id, cache_dir=MODEL_PATH)
+
     model = BlipForConditionalGeneration.from_pretrained(
         model_id, cache_dir=MODEL_PATH
     ).to(device)
+
     captions = []
     text = text.strip()
 
@@ -308,17 +331,14 @@ def blip_captioning_dataset(
     print("Substitution tokens:", substitution_tokens)
 
     for image in tqdm(images):
+
         inputs = processor(image, return_tensors="pt").to("cuda")
-        out = model.generate(
-            **inputs, max_length=150, do_sample=True, top_k=50, temperature=0.7
-        )
+        out = model.generate(**inputs, max_length=150, do_sample=True, top_k=50, temperature=0.7)
         caption = processor.decode(out[0], skip_special_tokens=True)
 
-        # BLIP 2 lowercases all caps tokens. This should properly replace them w/o messing up subwords. I'm sure there's a better way to do this.
+        # BLIP 2 lowercases all caps tokens. This should properly replace them w/o messing up subwords.
         for token in substitution_tokens:
-            sub_cap = " " + caption + " "
-            sub_cap = sub_cap.replace(" " + token.lower() + " ", " " + token + " ")
-            caption = sub_cap.strip()
+            caption = caption.replace(f" {token.lower()} ", f" {token} ")
 
         print(caption)
         captions.append(caption)
@@ -328,7 +348,7 @@ def blip_captioning_dataset(
         retry_count = 0
         while retry_count < 4:
             try:
-                captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions)
+                captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, mode)
                 break
             except Exception as e:
                 retry_count += 1
@@ -339,16 +359,9 @@ def blip_captioning_dataset(
     else:
         if len(text) == 0:
             print("WARNING: no captioning text was given and there's too few/many prompts to do chatgpt cleanup...")
-
-        # manually add the trigger_text:
         trigger_text = text
-        captions = [trigger_text + " " + caption for caption in captions]
+        captions = [trigger_text + caption for caption in captions]
         gpt_concept_name = None
-
-    print("----------------------------------")
-    print("Final training captions:")
-    for caption in captions:
-        print(caption)
 
     return captions, trigger_text, gpt_concept_name
 
@@ -558,6 +571,7 @@ def load_image_with_orientation(path, mode = "RGB"):
 
 
 def load_and_save_masks_and_captions(
+    mode: str,
     files: Union[str, List[str]],
     output_dir: str = "tmp_out",
     caption_text: Optional[str] = None,
@@ -576,6 +590,7 @@ def load_and_save_masks_and_captions(
 
     Example:
     >>> x = load_and_save_masks_and_captions(
+                "face",
                 files="./data/images",
                 output_dir="./data/masks_and_captions",
                 caption_text="a photo of",
@@ -619,7 +634,7 @@ def load_and_save_masks_and_captions(
     # captions
     print(f"Generating {len(images)} captions...")
     captions, trigger_text, gpt_concept_name = blip_captioning_dataset(
-        images, text=caption_text, substitution_tokens=substitution_tokens
+        images, mode, text=caption_text, substitution_tokens=substitution_tokens
     )
 
     if gpt_concept_name is not None and ((mask_target_prompts is None) or (mask_target_prompts == "")):
@@ -647,9 +662,16 @@ def load_and_save_masks_and_captions(
         coms = [_center_of_mass(mask) for mask in seg_masks]
     else:
         coms = [(image.size[0] / 2, image.size[1] / 2) for image in images]
+        
     # based on the center of mass, crop the image to a square
     images = [
-        _crop_to_square(image, com, resize_to=None) for image, com in zip(images, coms)
+        _crop_to_square(image, com, resize_to=None) 
+        for image, com in zip(images, coms)
+    ]
+
+    seg_masks = [
+        _crop_to_square(mask, com, resize_to=target_size) 
+        for mask, com in zip(seg_masks, coms)
     ]
 
     print(f"Upscaling {len(images)} images...")
@@ -676,11 +698,6 @@ def load_and_save_masks_and_captions(
     images = [
         image.resize((target_size, target_size), Image.Resampling.LANCZOS)
         for image in images
-    ]
-
-    seg_masks = [
-        _crop_to_square(mask, com, resize_to=target_size)
-        for mask, com in zip(seg_masks, coms)
     ]
 
     data = []

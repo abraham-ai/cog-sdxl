@@ -348,6 +348,50 @@ class TokenEmbeddingsHandler:
             self.embeddings_settings[f"index_no_updates_{idx}"] = inu
 
             idx += 1
+            
+
+    #############################################################################################################
+    #############################################################################################################
+    #############################################################################################################
+
+
+    def pre_optimize_token_embeddings(self, train_dataset, epochs=10):
+
+        for idx in range(len(train_dataset)):
+            sample = train_dataset[i]
+            print("sample:")
+            print(sample)
+
+
+        for step, batch in enumerate(train_dataset):
+
+            (tok1, tok2), vae_latent, mask = batch
+            vae_latent = vae_latent.to(weight_dtype)
+
+            # tokens to text embeds
+            prompt_embeds_list = []
+            for tok, text_encoder in zip((tok1, tok2), text_encoders):
+                prompt_embeds_out = text_encoder(
+                    tok.to(text_encoder.device),
+                    output_hidden_states=True,
+                )
+
+                pooled_prompt_embeds = prompt_embeds_out[0]
+                prompt_embeds = prompt_embeds_out.hidden_states[-2]
+                bs_embed, seq_len, _ = prompt_embeds.shape
+                prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
+                prompt_embeds_list.append(prompt_embeds)
+
+            prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
+            pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
+
+
+
+
+
+
+
+
 
     def save_embeddings(self, file_path: str):
         assert (

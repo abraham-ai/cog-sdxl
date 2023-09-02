@@ -13,26 +13,28 @@ def hamming_distance(dict1, dict2):
 
 
 # Setup the base experiment config:
-input_images         = "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/euc.zip"
-run_name             = "fin_07"
+lora_training_urls    = "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_5.zip"
+run_name             = "xander_face_test"
 caption_prefix       = ""  # "" to activate chatgpt
-mask_target_prompts  = "black electric wheel"  # "" to activate chatgpt
+mask_target_prompts  = "face"  # "" to activate chatgpt
 n_exp                = 40  # how many random experiment settings to generate
-min_hamming_distance = 3   # min_n_params that have to be different from any previous experiment to be scheduled
+min_hamming_distance = 2   # min_n_params that have to be different from any previous experiment to be scheduled
 
 # Define training hyperparameters and their possible values
 # The params are sampled stochastically, so if you want to use a specific value more often, just put it in multiple times
 hyperparameters = {
-    'resolution': [768,1024],
-    'ti_weight_decay': ['0.0', '1e-4', '6e-4'],
-    'lora_weight_decay': ['1e-4', '3e-4'],
-    'ti_lr': ['1e-3', '3e-3'],
-    'lora_lr': ['5e-5', '1e-4', '3e-4'],
-    'lora_rank': ['6'],
-    'max_train_steps': ['1000'],
+    'resolution': [768],
+    'lora_lr': ['1e-4'],
+    'ti_lr': ['3e-4', '1e-3', '3e-3'],
+    'lora_weight_decay': ['1e-4'],
+    'ti_weight_decay': ['0.0', '1e-4'],
+    'lora_rank': ['4', '6'],
+    'checkpointing_steps': ['200'],
+    'max_train_steps': ['600'],
     'train_batch_size': ['2'],
-    'left_right_flip_augmentation': ['True'],
+    'left_right_flip_augmentation': ['False'],
     'seed': ['0'],
+    'run_local': ['True']   # avoid sending the entire .rar file back after each training run (takes a long time)
 }
 
 #######################################################################################
@@ -75,7 +77,7 @@ with open(output_filename, "w") as f:
         # add experiment_settings to run_name:
         run_name_exp = f"{run_name}_{exp_index:09d}"
 
-        f.write(f'cog train -i input_images="{input_images}" \\\n')
+        f.write(f'cog predict -i lora_training_urls="{lora_training_urls}" \\\n')
         f.write(f'    -i run_name="{run_name_exp}" -i caption_prefix="{caption_prefix}" \\\n')
         f.write(f'    -i mask_target_prompts="{mask_target_prompts}" \\\n')
 

@@ -24,18 +24,15 @@ from dataset_and_utils import (
 
 from io_utils import make_validation_img_grid, download_and_prep_training_data
 
-from predict import SDXL_MODEL_CACHE
+from predict_old import SDXL_MODEL_CACHE
 from diffusers import StableDiffusionXLPipeline
 from safetensors.torch import load_file
 
-def patch_pipe_with_lora(pipe, lora_path, lora_scale):
-    with open(os.path.join(lora_path, "special_params.json"), "r") as f:
-        lora_token_map = json.load(f)
+def patch_pipe_with_lora(pipe, lora_path):
 
     with open(os.path.join(lora_path, "training_args.json"), "r") as f:
         training_args = json.load(f)
         lora_rank      = training_args["lora_rank"]
-        trigger_prompt = training_args["trigger_text"]
     
     unet = pipe.unet
     tensors = load_file(os.path.join(lora_path, "lora.safetensors"))
@@ -69,33 +66,58 @@ def patch_pipe_with_lora(pipe, lora_path, lora_scale):
     unet.load_state_dict(tensors, strict=False)
     handler = TokenEmbeddingsHandler([pipe.text_encoder, pipe.text_encoder_2], [pipe.tokenizer, pipe.tokenizer_2])
     handler.load_embeddings(os.path.join(lora_path, "embeddings.pti"))
-    return pipe, lora_token_map, trigger_prompt
+    return pipe
 
-def prepare_prompt_for_lora(prompt, token_map, trigger_text):
-    prompt = prompt.format(trigger_text)
+def prepare_prompt_for_lora(prompt, lora_path, verbose = False):
+    orig_prompt = prompt
+    with open(os.path.join(lora_path, "special_params.json"), "r") as f:
+        token_map = json.load(f)
+
+    with open(os.path.join(lora_path, "training_args.json"), "r") as f:
+        training_args = json.load(f)
+        trigger_text = training_args["trigger_text"]
+
+    if "<concept>" in prompt:
+        prompt = prompt.replace("<concept>", trigger_text)
+    else:
+        prompt = trigger_text + " " + prompt
+
     for k, v in token_map.items():
         if k in prompt:
-            print(f"replacing {k} with {v} in validation_prompt")
             prompt = prompt.replace(k, v)
+
+    # fix some common mistakes:
+    prompt = prompt.replace(",,", ",")
+    prompt = prompt.replace("  ", " ")
+    prompt = prompt.replace(" .", ".")
+    prompt = prompt.replace(" ,", ",")
+    
+    if verbose:
+        print('-------------------------')
+        print("Adjusted prompt for LORA:")
+        print(orig_prompt)
+        print('-- to:')
+        print(prompt)
+        print('-------------------------')
 
     return prompt
 
 @torch.no_grad()
 def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, device = "cuda:0"):
     validation_prompts = [
-            'a towering {} monument on a huge open square in a bustling city',
-            'a mesmerizing oil painting portraying {} with ethereal lighting',
-            'an origami paper sculpture of {}',
-            'a vibrant low-poly artwork of {}, rendered in SVG, imbued with a sense of motion',
-            '{} taking a shower, polaroid photograph',
-            'a lifelike {} sand sculpture, complete with intricate details, standing tall on a sunny beach',
-            '{} immortalized as an exquisite marble statue with masterful chiseling, patterns and textures',
-            'a colorful and dynamic {} mural sprawling across the side of a building in a city pulsing with life',
+            'a statue of <concept>',
+            'a masterful oil painting portraying <concept> with vibrant colors, brushstrokes and textures',
+            'an origami paper sculpture of <concept>',
+            'a vibrant low-poly artwork of <concept>, rendered in SVG, vector graphics',
+            '<concept>, polaroid photograph',
+            'a huge <concept> sand sculpture on a sunny beach, made of sand',
+            '<concept> immortalized as an exquisite marble statue with masterful chiseling, swirling marble patterns and textures',
+            'a colorful and dynamic <concept> mural sprawling across the side of a building in a city pulsing with life',
     ]
 
     random.seed(seed)
     validation_prompts = random.sample(validation_prompts, n_imgs)
-    validation_prompts[0] = '{}'
+    validation_prompts[0] = '<concept>'
 
     torch.cuda.empty_cache()
 
@@ -103,9 +125,9 @@ def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, dev
         SDXL_MODEL_CACHE, torch_dtype=torch.float16
     )
     pipeline = pipeline.to(device)
-    pipeline, token_map, trigger_prompt = patch_pipe_with_lora(pipeline, lora_path, lora_scale)
+    pipeline = patch_pipe_with_lora(pipeline, lora_path)
 
-    validation_prompts = [prepare_prompt_for_lora(prompt, token_map, trigger_prompt) for prompt in validation_prompts]
+    validation_prompts = [prepare_prompt_for_lora(prompt, lora_path) for prompt in validation_prompts]
     generator = torch.Generator(device=device).manual_seed(0)
     pipeline_args = {
                 "negative_prompt": "nude, naked, poorly drawn face, ugly, tiling, out of frame, extra limbs, disfigured, deformed body, blurry, blurred, watermark, text, grainy, signature, cut off, draft", 
@@ -117,7 +139,7 @@ def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, dev
         for i in range(n_imgs):
             pipeline_args["prompt"] = validation_prompts[i]
             print(f"Rendering validation img with prompt: {validation_prompts[i]}")
-            image = pipeline(**pipeline_args, generator=generator).images[0]
+            image = pipeline(**pipeline_args, generator=generator, cross_attention_kwargs = {"scale": lora_scale}).images[0]
             image.save(os.path.join(lora_path, f"img_{train_step:04d}_{i}.jpg"), format="JPEG", quality=95)
 
     # create img_grid:
@@ -156,6 +178,7 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
     render_images(f"{output_dir}", global_step, seed)
 
 
+
 def main(
     pretrained_model_name_or_path: Optional[
         str
@@ -176,8 +199,8 @@ def main(
     unet_learning_rate: float = 1e-5,
     ti_lr: float = 3e-4,
     lora_lr: float = 1e-4,
-    weight_decay_lora: float = 1e-4,
-    weight_decay_ti: float = 1e-3,
+    lora_weight_decay: float = 1e-4,
+    ti_weight_decay: float = 0.0,
     pivot_halfway: bool = True,
     scale_lr: bool = False,
     lr_scheduler: str = "constant",
@@ -247,6 +270,7 @@ def main(
             else:
                 param.requires_grad = False
 
+    unet_param_to_optimize_names = []
     if not is_lora:
         WHITELIST_PATTERNS = [
             # "*.attn*.weight",
@@ -254,8 +278,6 @@ def main(
             "*"
         ]  # TODO : make this a parameter
         BLACKLIST_PATTERNS = ["*.norm*.weight", "*time*"]
-
-        unet_param_to_optimize_names = []
         for name, param in unet.named_parameters():
             if any(
                 fnmatch.fnmatch(name, pattern) for pattern in WHITELIST_PATTERNS
@@ -312,16 +334,20 @@ def main(
 
         unet.set_attn_processor(unet_lora_attn_procs)
 
+        print("Creating optimizer with:")
+        print(f"lora_lr: {lora_lr}, lora_weight_decay: {lora_weight_decay}")
+        print(f"ti_lr: {ti_lr}, ti_weight_decay: {ti_weight_decay}")
+
         params_to_optimize = [
             {
                 "params": unet_lora_parameters,
                 "lr": lora_lr,
-                "weight_decay": weight_decay_lora,
+                "weight_decay": lora_weight_decay,
             },
             {
                 "params": text_encoder_parameters,
                 "lr": ti_lr,
-                "weight_decay": weight_decay_ti,
+                "weight_decay": ti_weight_decay,
             },
         ]
 
@@ -372,6 +398,11 @@ def main(
 
     total_batch_size = train_batch_size * gradient_accumulation_steps
 
+
+    # Experimental: warmup the token embeddings using CLIP-similarity:
+    #embedding_handler.pre_optimize_token_embeddings(train_dataset)
+
+
     if verbose:
         print(f"# PTI :  Running training ")
         print(f"# PTI :  Num examples = {len(train_dataset)}")
@@ -386,6 +417,7 @@ def main(
 
     global_step = 0
     first_epoch = 0
+    last_save_step = 0
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, max_train_steps))
@@ -476,16 +508,29 @@ def main(
             lr_scheduler.step()
             optimizer.zero_grad()
 
+            # Print some statistics on the mean and std of unet_lora_parameters:
+            if is_lora and (global_step % 20 == 0):
+                means, std = [], []
+                for param in unet_lora_parameters:
+                    means.append(param.mean())
+                    std.append(param.std())
+                print(f"LORA params mean: {torch.mean(torch.stack(means)):.6f}, std: {torch.mean(torch.stack(std)):.6f}")
+
             # every step, we reset the non-trainable embeddings to the original embeddings.
             embedding_handler.retract_embeddings(print_stds = (global_step % 50 == 0))
 
-            if (global_step % checkpointing_steps == 0) and (global_step > 250):
+            if (global_step % checkpointing_steps == 0) and (global_step > 0):
                 output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
+                last_save_step = global_step
 
 
     # final_save
-    output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
+    if (global_step - last_save_step) > 50:
+        output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
+    else:
+        output_save_dir = f"{checkpoint_dir}/checkpoint-{last_save_step}"
+
     if not os.path.exists(output_save_dir):
         save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
     else:
