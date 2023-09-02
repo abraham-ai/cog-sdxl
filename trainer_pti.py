@@ -126,6 +126,35 @@ def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, dev
     del pipeline
     torch.cuda.empty_cache()
 
+def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names):
+    """
+    Save the LORA model to output_dir, optionally with some example images
+
+    """
+    print(f"Saving checkpoint at step.. {global_step}")
+    os.makedirs(output_dir, exist_ok=True)
+
+    if not is_lora:
+        tensors = {
+            name: param
+            for name, param in unet.named_parameters()
+            if name in unet_param_to_optimize_names
+        }
+        save_file(tensors, f"{output_dir}/unet.safetensors",)
+
+    else:
+        lora_tensors = unet_attn_processors_state_dict(unet)
+        save_file(lora_tensors, f"{output_dir}/lora.safetensors")
+
+    embedding_handler.save_embeddings(f"{output_dir}/embeddings.pti",)
+
+    with open(f"{output_dir}/special_params.json", "w") as f:
+        json.dump(token_dict, f)
+    with open(f"{output_dir}/training_args.json", "w") as f:
+        json.dump(args_dict, f, indent=4)
+
+    render_images(f"{output_dir}", global_step, seed)
+
 
 def main(
     pretrained_model_name_or_path: Optional[
@@ -451,68 +480,18 @@ def main(
             embedding_handler.retract_embeddings(print_stds = (global_step % 50 == 0))
 
             if (global_step % checkpointing_steps == 0) and (global_step > 250):
-                # save the required params of unet with safetensor
-                print(f"Saving checkpoint at step.. {global_step}")
-                os.makedirs(f"{checkpoint_dir}/checkpoint-{global_step}", exist_ok=True)
+                output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
+                save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
 
-                if not is_lora:
-                    tensors = {
-                        name: param
-                        for name, param in unet.named_parameters()
-                        if name in unet_param_to_optimize_names
-                    }
-                    save_file(
-                        tensors,
-                        f"{checkpoint_dir}/checkpoint-{global_step}/unet.safetensors",
-                    )
-
-                else:
-                    lora_tensors = unet_attn_processors_state_dict(unet)
-
-                    save_file(
-                        lora_tensors,
-                        f"{checkpoint_dir}/checkpoint-{global_step}/lora.safetensors",
-                    )
-
-                embedding_handler.save_embeddings(
-                    f"{checkpoint_dir}/checkpoint-{global_step}/embeddings.pti",
-                )
-
-                with open(f"{checkpoint_dir}/checkpoint-{global_step}/special_params.json", "w") as f:
-                    json.dump(token_dict, f)
-                with open(f"{checkpoint_dir}/checkpoint-{global_step}/training_args.json", "w") as f:
-                    json.dump(args_dict, f, indent=4)
-
-                render_images(f"{checkpoint_dir}/checkpoint-{global_step}", global_step, seed)
 
     # final_save
-    print("Saving final model for return")
-    if not is_lora:
-        tensors = {
-            name: param
-            for name, param in unet.named_parameters()
-            if name in unet_param_to_optimize_names
-        }
-        save_file(
-            tensors,
-            f"{output_dir}/unet.safetensors",
-        )
+    output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
+    if not os.path.exists(output_save_dir):
+        save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
     else:
-        lora_tensors = unet_attn_processors_state_dict(unet)
-        save_file(
-            lora_tensors,
-            f"{output_dir}/lora.safetensors",
-        )
+        print(f"Skipping final save, {output_save_dir} already exists")
 
-    embedding_handler.save_embeddings(
-        f"{output_dir}/embeddings.pti",
-    )
-
-    to_save = token_dict
-    with open(f"{output_dir}/special_params.json", "w") as f:
-        json.dump(to_save, f)
-    with open(f"{output_dir}/training_args.json", "w") as f:
-        json.dump(args_dict, f, indent=4)
+    return output_save_dir
 
 
 if __name__ == "__main__":

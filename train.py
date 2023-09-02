@@ -188,7 +188,7 @@ def train(
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir)
-
+    
     input_dir, n_imgs, trigger_text, segmentation_prompt = preprocess(
         output_dir,
         input_images_filetype=input_images_filetype,
@@ -235,7 +235,7 @@ def train(
     with open(os.path.join(output_dir, "training_args.json"), "w") as f:
         json.dump(args_dict, f, indent=4)
 
-    main(
+    output_save_dir = main(
         pretrained_model_name_or_path=SDXL_MODEL_CACHE,
         instance_data_dir=os.path.join(input_dir, "captions.csv"),
         output_dir=output_dir,
@@ -264,16 +264,16 @@ def train(
         args_dict=args_dict,
     )
 
+    thumbnail_grid_path = os.path.join(output_save_dir, "validation_grid.jpg")
     out_path = "trained_model.tar"
-
-    """
-    directory = Path(output_dir)
+    directory = Path(output_save_dir)
 
     with tarfile.open(out_path, "w") as tar:
         for file_path in directory.rglob("*"):
             print(file_path)
             arcname = file_path.relative_to(directory)
             tar.add(file_path, arcname=arcname)
-    """
+
+    
 
     return TrainingOutput(weights=Path(out_path))

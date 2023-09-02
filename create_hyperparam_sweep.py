@@ -13,26 +13,25 @@ def hamming_distance(dict1, dict2):
 
 
 # Setup the base experiment config:
-input_images         = "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_5.zip"
-run_name             = "xander"
+input_images         = "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/euc.zip"
+run_name             = "fin_07"
 caption_prefix       = ""  # "" to activate chatgpt
-mask_target_prompts  = "face"  # "" to activate chatgpt
+mask_target_prompts  = "black electric wheel"  # "" to activate chatgpt
 n_exp                = 40  # how many random experiment settings to generate
-min_hamming_distance = 2   # min_n_params that have to be different from any previous experiment to be scheduled
+min_hamming_distance = 3   # min_n_params that have to be different from any previous experiment to be scheduled
 
 # Define training hyperparameters and their possible values
 # The params are sampled stochastically, so if you want to use a specific value more often, just put it in multiple times
 hyperparameters = {
     'resolution': [768,1024],
-    'ti_weight_decay': ['0.0', '1e-4', '1e-3'],
-    'lora_weight_decay': ['0.0', '1e-5', '1e-4'],
-    'ti_lr': ['8e-5', '3e-4', '12e-4'],
-    'lora_lr': ['1e-4'],
-    'lora_rank': ['4'],
-    'max_train_steps': ['1500'],
+    'ti_weight_decay': ['0.0', '1e-4', '6e-4'],
+    'lora_weight_decay': ['1e-4', '3e-4'],
+    'ti_lr': ['1e-3', '3e-3'],
+    'lora_lr': ['5e-5', '1e-4', '3e-4'],
+    'lora_rank': ['6'],
+    'max_train_steps': ['1000'],
     'train_batch_size': ['2'],
-    'use_face_detection_instead': ['False', 'True'],
-    'left_right_flip_augmentation': ['False'],
+    'left_right_flip_augmentation': ['True'],
     'seed': ['0'],
 }
 
