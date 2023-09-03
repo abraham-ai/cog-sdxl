@@ -71,7 +71,7 @@ class Predictor(BasePredictor):
         ),
         max_train_steps: int = Input(
             description="Number of individual training steps. Takes precedence over num_train_epochs",
-            default=600,
+            default=800,
         ),
         checkpointing_steps: int = Input(
             description="Number of steps between saving checkpoints. Set to very very high number to disable checkpointing, because you don't need one.",
@@ -91,11 +91,11 @@ class Predictor(BasePredictor):
         ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
-            default=5e-4,
+            default=6e-4,
         ),
         lora_lr: float = Input(
             description="Learning rate for training LoRA matrices. Don't alter unless you know what you're doing.",
-            default=3e-4,
+            default=5e-5,
         ),
         ti_weight_decay: float = Input(
             description="weight decay for textual inversion embeddings. Don't alter unless you know what you're doing.",
@@ -103,7 +103,7 @@ class Predictor(BasePredictor):
         ),
         lora_weight_decay: float = Input(
             description="weight decay for LoRa. Don't alter unless you know what you're doing.",
-            default=3e-4,
+            default=1e-4,
         ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 4 is good, for complex concepts you can try 6 or 8",
@@ -121,16 +121,12 @@ class Predictor(BasePredictor):
             description="Number of warmup steps for lr schedulers with warmups.",
             default=50,
         ),
-        token_string: str = Input(
-            description="A unique string that will be trained to refer to the concept in the input images. Can be anything, but TOK works well",
-            default="TOK",
-        ),
         # token_map: str = Input(
         #     description="String of token and their impact size specificing tokens used in the dataset. This will be in format of `token1:size1,token2:size2,...`.",
         #     default="TOK:2",
         # ),
         caption_prefix: str = Input(
-            description="Prefix text prepended to automatic captioning. Must contain the `token_string`. Example is 'a photo of TOK, '.  If empty, chatgpt will take care of this automatically",
+            description="Prefix text prepended to automatic captioning. Must contain the 'TOK'. Example is 'a photo of TOK, '.  If empty, chatgpt will take care of this automatically",
             default="",
         ),
         left_right_flip_augmentation: bool = Input(
@@ -164,9 +160,13 @@ class Predictor(BasePredictor):
         ),
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
 
+        if mode == "face":
+            mask_target_prompts = "face"
+
         print("cog:predict:train_lora")
 
         # Hard-code token_map for now. Make it configurable once we support multiple concepts or user-uploaded caption csv.
+        token_string = "TOK"
         token_map = token_string + ":2"
 
         # Process 'token_to_train' and 'input_data_tar_or_zip'
@@ -188,14 +188,14 @@ class Predictor(BasePredictor):
         if not os.path.exists(SDXL_MODEL_CACHE):
             download_weights(SDXL_URL, SDXL_MODEL_CACHE)
 
-        output_dir = os.path.join("loras", run_name)
+        output_dir = os.path.join("lora_models_styles", run_name)
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
         os.makedirs(output_dir)
 
         print(lora_training_urls)
 
-        input_dir, n_imgs, trigger_text, segmentation_prompt = preprocess(
+        input_dir, n_imgs, trigger_text, segmentation_prompt, captions = preprocess(
             output_dir,
             mode,
             input_zip_path=lora_training_urls,
@@ -209,9 +209,12 @@ class Predictor(BasePredictor):
             left_right_flip_augmentation=left_right_flip_augmentation
         )
 
-        # Make a dict of all the arguments and save it to args.json:
+        # Make a dict of all the arguments and save it to args.json: 
+
         args_dict = {
+            "mode": mode,
             "input_images": str(lora_training_urls),
+            "trainig_captions": captions,
             "num_training_images": n_imgs,
             "seed": seed,
             "resolution": resolution,

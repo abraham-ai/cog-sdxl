@@ -75,7 +75,8 @@ def prepare_prompt_for_lora(prompt, lora_path, verbose = False):
 
     with open(os.path.join(lora_path, "training_args.json"), "r") as f:
         training_args = json.load(f)
-        trigger_text = training_args["trigger_text"]
+        trigger_text  = training_args["trigger_text"]
+        mode          = training_args["mode"]
 
     if "<concept>" in prompt:
         prompt = prompt.replace("<concept>", trigger_text)
@@ -148,7 +149,7 @@ def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, dev
     del pipeline
     torch.cuda.empty_cache()
 
-def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names):
+def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names, make_images = True):
     """
     Save the LORA model to output_dir, optionally with some example images
 
@@ -175,7 +176,8 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
     with open(f"{output_dir}/training_args.json", "w") as f:
         json.dump(args_dict, f, indent=4)
 
-    render_images(f"{output_dir}", global_step, seed)
+    if make_images:
+        render_images(f"{output_dir}", global_step, seed)
 
 
 
@@ -201,7 +203,6 @@ def main(
     lora_lr: float = 1e-4,
     lora_weight_decay: float = 1e-4,
     ti_weight_decay: float = 0.0,
-    pivot_halfway: bool = True,
     scale_lr: bool = False,
     lr_scheduler: str = "constant",
     lr_warmup_steps: int = 500,
@@ -304,6 +305,7 @@ def main(
         ]
 
     else:
+        
         # Do lora-training instead.
         unet.requires_grad_(False)
         unet_lora_attn_procs = {}
@@ -398,11 +400,6 @@ def main(
 
     total_batch_size = train_batch_size * gradient_accumulation_steps
 
-
-    # Experimental: warmup the token embeddings using CLIP-similarity:
-    #embedding_handler.pre_optimize_token_embeddings(train_dataset)
-
-
     if verbose:
         print(f"# PTI :  Running training ")
         print(f"# PTI :  Num examples = {len(train_dataset)}")
@@ -426,17 +423,47 @@ def main(
         shutil.rmtree(checkpoint_dir)
     os.makedirs(f"{checkpoint_dir}")
 
-    for epoch in range(first_epoch, num_train_epochs):
-        if pivot_halfway:
-            if epoch == num_train_epochs // 2:
-                print("# PTI :  Pivot halfway")
-                # remove text encoder parameters from the optimizer
-                optimizer.param_groups = params_to_optimize[:1]
+    # Experimental: warmup the token embeddings using CLIP-similarity:
+    #embedding_handler.pre_optimize_token_embeddings(train_dataset)
 
-                # remove the optimizer state corresponding to text_encoder_parameters
-                for param in text_encoder_parameters:
-                    if param in optimizer.state:
-                        del optimizer.state[param]
+
+    lr_ramp_power = 2.0
+
+    import matplotlib.pyplot as plt
+
+    def plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path='learning_rates.png'):
+        epochs = range(first_epoch, num_train_epochs)
+        lora_lrs = []
+        ti_lrs = []
+        
+        for epoch in epochs:
+            completion_f = epoch / num_train_epochs
+            # param_groups[0] goes from 0.0 to lora_lr over the course of training
+            lora_lrs.append(lora_lr * completion_f ** lr_ramp_power)
+            # param_groups[1] goes from ti_lr to 0.0 over the course of training
+            ti_lrs.append(ti_lr * (1 - completion_f) ** lr_ramp_power)
+            
+        plt.figure()
+        plt.plot(epochs, lora_lrs, label='LoRA LR')
+        plt.plot(epochs, ti_lrs, label='TI LR')
+        plt.xlabel('Epoch')
+        plt.ylabel('Learning Rate')
+        plt.title('Learning Rate Curves')
+        plt.legend()
+        plt.savefig(save_path)
+        plt.show()
+
+    plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path=os.path.join(checkpoint_dir, 'learning_rates.png'))
+
+
+    for epoch in range(first_epoch, num_train_epochs):
+
+        if is_lora: # Update learning rates for embeddings and lora:
+            completion_f = epoch / num_train_epochs
+            # param_groups[0] goes from 0.0 to lora_lr over the course of training
+            optimizer.param_groups[0]['lr'] = lora_lr * completion_f ** lr_ramp_power
+            # param_groups[1] goes from ti_lr to 0.0 over the course of training
+            optimizer.param_groups[1]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
 
         unet.train()
         for step, batch in enumerate(train_dataloader):
@@ -505,7 +532,7 @@ def main(
 
             loss.backward()
             optimizer.step()
-            lr_scheduler.step()
+            #lr_scheduler.step()
             optimizer.zero_grad()
 
             # Print some statistics on the mean and std of unet_lora_parameters:
@@ -515,11 +542,12 @@ def main(
                     means.append(param.mean())
                     std.append(param.std())
                 print(f"LORA params mean: {torch.mean(torch.stack(means)):.6f}, std: {torch.mean(torch.stack(std)):.6f}")
+                print(f"LORA-lr: {optimizer.param_groups[0]['lr']:.6f}, TI-lr: {optimizer.param_groups[1]['lr']:.6f}")
 
             # every step, we reset the non-trainable embeddings to the original embeddings.
             embedding_handler.retract_embeddings(print_stds = (global_step % 50 == 0))
 
-            if (global_step % checkpointing_steps == 0) and (global_step > 0):
+            if (global_step % checkpointing_steps == 0) and (global_step > 100):
                 output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
                 last_save_step = global_step

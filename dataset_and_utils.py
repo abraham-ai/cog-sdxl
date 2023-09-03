@@ -199,11 +199,11 @@ def import_model_class_from_model_name_or_path(
 
     if model_class == "CLIPTextModel":
         from transformers import CLIPTextModel
-
+        print("Importing CLIPTextModel")
         return CLIPTextModel
     elif model_class == "CLIPTextModelWithProjection":
         from transformers import CLIPTextModelWithProjection
-
+        print("Importing CLIPTextModelWithProjection")
         return CLIPTextModelWithProjection
     else:
         raise ValueError(f"{model_class} is not supported.")
@@ -256,6 +256,8 @@ def load_models(pretrained_model_name_or_path, revision, device, weight_dtype):
     vae.to(device, dtype=torch.float32)
     text_encoder_one.to(device, dtype=weight_dtype)
     text_encoder_two.to(device, dtype=weight_dtype)
+
+    print(text_encoder_one)
 
     return (
         tokenizer_one,
@@ -358,23 +360,29 @@ class TokenEmbeddingsHandler:
     def pre_optimize_token_embeddings(self, train_dataset, epochs=10):
 
         for idx in range(len(train_dataset)):
-            sample = train_dataset[i]
-            print("sample:")
-            print(sample)
+            (tok1, tok2), vae_latent, mask = train_dataset[idx]
+            image_path = train_dataset.image_path[idx]
+            image_path = os.path.join(os.path.dirname(train_dataset.csv_path), image_path)
+            image = PIL.Image.open(image_path).convert("RGB")
 
-
-        for step, batch in enumerate(train_dataset):
-
-            (tok1, tok2), vae_latent, mask = batch
-            vae_latent = vae_latent.to(weight_dtype)
+            print(f"---> Loaded sample {idx}:")
+            print("Tokens:")
+            print(tok1.shape)
+            print(tok2.shape)
+            print("Image:")
+            print(image.size)
 
             # tokens to text embeds
             prompt_embeds_list = []
-            for tok, text_encoder in zip((tok1, tok2), text_encoders):
+            #for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
+            for tok, text_encoder in zip((tok1, tok2), self.text_encoders):
                 prompt_embeds_out = text_encoder(
                     tok.to(text_encoder.device),
                     output_hidden_states=True,
                 )
+
+                print("prompt_embeds_out:")
+                print(prompt_embeds_out.shape)
 
                 pooled_prompt_embeds = prompt_embeds_out[0]
                 prompt_embeds = prompt_embeds_out.hidden_states[-2]
@@ -384,6 +392,11 @@ class TokenEmbeddingsHandler:
 
             prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
             pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
+
+            print("prompt_embeds:")
+            print(prompt_embeds.shape)
+            print("pooled_prompt_embeds:")
+            print(pooled_prompt_embeds.shape)
 
 
 

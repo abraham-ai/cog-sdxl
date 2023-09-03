@@ -92,7 +92,7 @@ def preprocess(
 
     output_dir: str = TEMP_OUT_DIR
 
-    n_training_imgs, trigger_text, segmentation_prompt = load_and_save_masks_and_captions(
+    n_training_imgs, trigger_text, segmentation_prompt, captions = load_and_save_masks_and_captions(
         mode, 
         files=TEMP_IN_DIR,
         output_dir=output_dir,
@@ -106,7 +106,7 @@ def preprocess(
         add_lr_flips = left_right_flip_augmentation,
     )
 
-    return Path(TEMP_OUT_DIR), n_training_imgs, trigger_text, segmentation_prompt
+    return Path(TEMP_OUT_DIR), n_training_imgs, trigger_text, segmentation_prompt, captions
 
 
 @torch.no_grad()
@@ -242,6 +242,21 @@ def cleanup_prompts_with_chatgpt(
 
             Reply by first stating the "Concept Name:", followed by a bullet point list of all the adjusted "Descriptions:".
             """
+
+    if mode == "concept_no_injection":
+        chat_gpt_prompt_1 = """
+            I have a set of images, each containing the same concept / figure. I have the following (poor) descriptions for each image:
+            """
+        
+        chat_gpt_prompt_2 = """
+            I want you to:
+            1. Find a good, short name/description of the single central concept that's in all the images. This [Concept Name] is likely already present in the descriptions above, pick the most obvious name or words to describe it.
+            2. Replace the main concept in each description with the name TOK (rephrase where needed)
+            As a result, every description should naturally contain the word TOK while keeping as much of the description as possible.
+
+            Reply by first stating the "Concept Name:", followed by a bullet point list of all the adjusted "Descriptions:".
+            """
+
     elif mode == "face":
         chat_gpt_prompt_1 = """
             I have a set of images, each containing a photo of a single person named TOK. I have the following (poor) descriptions for each image:
@@ -254,6 +269,20 @@ def cleanup_prompts_with_chatgpt(
             Make sure to insert the name TOK into each description, rephrasing where needed while keeping as much of the description as possible.
 
             Reply by first stating the "Concept Name: TOK", followed by a bullet point list of all the adjusted "Descriptions:".
+            """
+
+    elif mode == "style":
+        chat_gpt_prompt_1 = """
+            I have a set of images sharing a single style / aesthetic named TOK. I have the following (poor) descriptions for each image:
+            """
+        
+        chat_gpt_prompt_2 = """
+            I need you to rewrite these descriptions so that:
+            - there are no references to other styles (there's only one style in each picture, called TOK)
+            - each description contains the words "in the style of TOK" somewhere naturally in the sentence (usually at the end)
+            Make sure to insert the style name TOK into each description, rephrasing where needed while keeping as much of the description as possible.
+
+            Reply by first stating the "Style Name: TOK", followed by a bullet point list of all the adjusted "Descriptions:".
             """
 
     final_chatgpt_prompt = chat_gpt_prompt_1 + "\n- " + "\n- ".join(prompts) + "\n\n" + chat_gpt_prompt_2
@@ -278,16 +307,27 @@ def cleanup_prompts_with_chatgpt(
         if line.startswith("-"):
             prompts.append(line[2:])
 
+    trigger_text = "TOK"
+
     if mode == 'face':
         gpt_concept_name = "face"
-        trigger_text = "TOK"
-    elif mode == 'concept':
-        # extract the Concept Name from the response:
+    elif mode == 'concept' or mode == 'concept_no_injection':
+        # extract the [Concept Name] from the response:
         for line in gpt_completion.split("\n"):
             if line.startswith("Concept Name:"):
                 gpt_concept_name = line[14:]
                 break
-        trigger_text = "TOK, " + gpt_concept_name
+        if mode == 'concept':
+            trigger_text = "TOK, " + gpt_concept_name
+
+    elif mode == 'style':
+        # extract the [Style Name] from the response:
+        for line in gpt_completion.split("\n"):
+            if line.startswith("Style Name:"):
+                gpt_concept_name = line[12:]
+                break
+        trigger_text = ", in the style of TOK"
+        gpt_concept_name = "" #disables segmentation for style (use full img)
 
     return prompts, gpt_concept_name, trigger_text
 
@@ -342,7 +382,14 @@ def blip_captioning_dataset(
         while retry_count < 4:
             try:
                 captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, mode)
-                break
+                n_toks = 0
+                for caption in captions:
+                    if "TOK" in caption:
+                        n_toks += 1
+                    
+                if n_toks > int(0.8*len(captions)):
+                    break
+                
             except Exception as e:
                 retry_count += 1
                 print(f"An error occurred after try {retry_count}: {e}")
@@ -620,7 +667,7 @@ def load_and_save_masks_and_captions(
     images = [load_image_with_orientation(file) for file in files]
     n_training_imgs = len(images)
 
-    if add_lr_flips:
+    if add_lr_flips and len(images) < 40:
         print(f"Adding LR flips... (doubling the number of images from {n_training_imgs} to {n_training_imgs*2})")
         images = images + [image.transpose(Image.FLIP_LEFT_RIGHT) for image in images]
 
@@ -667,12 +714,9 @@ def load_and_save_masks_and_captions(
         for mask, com in zip(seg_masks, coms)
     ]
 
-    print(f"Upscaling {len(images)} images...")
-
-    if 0:
-        # upscale all images:
-        images = swin_ir_sr(images, target_size=(target_size, target_size))
-    else:
+    upscale_images = 0
+    if upscale_images: 
+        print(f"Upscaling {len(images)} images...")
         # upscale images that are smaller than target_size:
         images_to_upscale = []
         indices_to_replace = []
@@ -720,7 +764,7 @@ def load_and_save_masks_and_captions(
     # save the dataframe to a CSV file
     df.to_csv(os.path.join(output_dir, "captions.csv"), index=False)
 
-    return n_training_imgs, trigger_text, mask_target_prompts
+    return n_training_imgs, trigger_text, mask_target_prompts, captions
 
 
 def _find_files(pattern, dir="."):
