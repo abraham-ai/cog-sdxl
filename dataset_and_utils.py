@@ -297,7 +297,10 @@ class TokenEmbeddingsHandler:
         self.inserting_toks: Optional[List[str]] = None
         self.embeddings_settings = {}
 
-    def initialize_new_tokens(self, inserting_toks: List[str]):
+    def initialize_new_tokens(self, 
+        inserting_toks: List[str],
+        starting_toks:  Optional[List[str]] = None
+        ):
 
         print("Initializing new tokens...")
         print(inserting_toks)
@@ -312,33 +315,56 @@ class TokenEmbeddingsHandler:
             ), "All elements in inserting_toks should be strings."
 
             self.inserting_toks = inserting_toks
+
+            print("Inserting new tokens into tokenizer:")
+            print(self.inserting_toks)
+
             special_tokens_dict = {"additional_special_tokens": self.inserting_toks}
             tokenizer.add_special_tokens(special_tokens_dict)
             text_encoder.resize_token_embeddings(len(tokenizer))
 
             self.train_ids = tokenizer.convert_tokens_to_ids(self.inserting_toks)
 
-            # random initialization of new tokens
-            std_token_embedding = (
-                text_encoder.text_model.embeddings.token_embedding.weight.data.std()
-            )
-            std_token_mean = (  
-                text_encoder.text_model.embeddings.token_embedding.weight.data.mean()
-            )
+            if starting_toks is not None:
+                assert isinstance(
+                    starting_toks, list
+                ), "starting_toks should be a list of strings."
+                assert all(
+                    isinstance(tok, str) for tok in starting_toks
+                ), "All elements in starting_toks should be strings."
+                assert len(starting_toks) == len(self.inserting_toks), "starting_toks should have the same length as inserting_toks"
 
-            print(f"Text encoder {idx} token_embedding_std:  {std_token_embedding}")
-            print(f"Text encoder {idx} token_embedding_mean: {std_token_mean}")
+                self.starting_ids = tokenizer.convert_tokens_to_ids(self.starting_toks)
 
-            text_encoder.text_model.embeddings.token_embedding.weight.data[
-                self.train_ids
-            ] = (
-                torch.randn(
-                    len(self.train_ids), text_encoder.text_model.config.hidden_size
+                print(f"Copying embeddings from starting tokens {self.starting_toks} to new tokens {self.inserting_toks}")
+
+                # copy the embeddings of the starting tokens to the new tokens
+                text_encoder.text_model.embeddings.token_embedding.weight.data[
+                    self.train_ids] = text_encoder.text_model.embeddings.token_embedding.weight.data[self.starting_ids].clone()
+
+            else:
+                # random initialization of new tokens
+                std_token_embedding = (
+                    text_encoder.text_model.embeddings.token_embedding.weight.data.std()
                 )
-                .to(device=self.device)
-                .to(dtype=self.dtype)
-                * std_token_embedding
-            )
+                std_token_mean = (  
+                    text_encoder.text_model.embeddings.token_embedding.weight.data.mean()
+                )
+
+                print(f"Text encoder {idx} token_embedding_std:  {std_token_embedding}")
+                print(f"Text encoder {idx} token_embedding_mean: {std_token_mean}")
+
+                text_encoder.text_model.embeddings.token_embedding.weight.data[
+                    self.train_ids
+                ] = (
+                    torch.randn(
+                        len(self.train_ids), text_encoder.text_model.config.hidden_size
+                    )
+                    .to(device=self.device)
+                    .to(dtype=self.dtype)
+                    * std_token_embedding
+                )
+
             self.embeddings_settings[
                 f"original_embeddings_{idx}"
             ] = text_encoder.text_model.embeddings.token_embedding.weight.data.clone()
@@ -350,6 +376,18 @@ class TokenEmbeddingsHandler:
             self.embeddings_settings[f"index_no_updates_{idx}"] = inu
 
             idx += 1
+
+    def get_trainable_embeddings(self):
+        
+        trainable_embeddings = []
+        for idx, text_encoder in enumerate(self.text_encoders):
+            trainable_embeddings.append(
+                text_encoder.text_model.embeddings.token_embedding.weight.data[
+                    self.train_ids
+                ]
+            )
+
+        return trainable_embeddings
             
 
     #############################################################################################################
@@ -358,6 +396,8 @@ class TokenEmbeddingsHandler:
 
 
     def pre_optimize_token_embeddings(self, train_dataset, epochs=10):
+
+        ### THIS FUNCTION IS NOT FINISHED YET
 
         for idx in range(len(train_dataset)):
             (tok1, tok2), vae_latent, mask = train_dataset[idx]

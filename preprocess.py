@@ -340,6 +340,7 @@ def blip_captioning_dataset(
     model_id: Literal[
         "Salesforce/blip-image-captioning-large",
         "Salesforce/blip-image-captioning-base",
+        "Salesforce/blip2-opt-2.7b",
     ] = "Salesforce/blip-image-captioning-large",
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     substitution_tokens: Optional[List[str]] = None,
@@ -351,11 +352,16 @@ def blip_captioning_dataset(
     TODO, try BLIP2: https://huggingface.co/docs/transformers/main/model_doc/blip-2#transformers.Blip2ForConditionalGeneration.forward.example-2
     """
 
-    processor = BlipProcessor.from_pretrained(model_id, cache_dir=MODEL_PATH)
-
-    model = BlipForConditionalGeneration.from_pretrained(
-        model_id, cache_dir=MODEL_PATH
-    ).to(device)
+    if "blip2" in model_id:
+        processor = Blip2Processor.from_pretrained(model_id, cache_dir=MODEL_PATH)
+        model = Blip2ForConditionalGeneration.from_pretrained(
+            model_id, cache_dir=MODEL_PATH, torch_dtype=torch.float16
+        ).to(device)
+    else:
+        processor = BlipProcessor.from_pretrained(model_id, cache_dir=MODEL_PATH)
+        model = BlipForConditionalGeneration.from_pretrained(
+            model_id, cache_dir=MODEL_PATH, torch_dtype=torch.float16
+        ).to(device)
 
     captions = []
     text = text.strip()
@@ -364,8 +370,7 @@ def blip_captioning_dataset(
     print("Substitution tokens:", substitution_tokens)
 
     for image in tqdm(images):
-
-        inputs = processor(image, return_tensors="pt").to("cuda")
+        inputs = processor(image, return_tensors="pt").to(device, torch.float16)
         out = model.generate(**inputs, max_length=150, do_sample=True, top_k=50, temperature=0.7)
         caption = processor.decode(out[0], skip_special_tokens=True)
 
@@ -400,7 +405,7 @@ def blip_captioning_dataset(
         if len(text) == 0:
             print("WARNING: no captioning text was given and there's too few/many prompts to do chatgpt cleanup...")
         trigger_text = text
-        captions = [trigger_text + caption for caption in captions]
+        captions = [trigger_text + ", " + caption for caption in captions]
         gpt_concept_name = None
 
     return captions, trigger_text, gpt_concept_name
@@ -714,7 +719,7 @@ def load_and_save_masks_and_captions(
         for mask, com in zip(seg_masks, coms)
     ]
 
-    upscale_images = 0
+    upscale_images = 1
     if upscale_images: 
         print(f"Upscaling {len(images)} images...")
         # upscale images that are smaller than target_size:

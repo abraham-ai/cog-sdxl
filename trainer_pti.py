@@ -219,6 +219,8 @@ def main(
     is_lora: bool = True,
     lora_rank: int = 32,
     args_dict: dict = {},
+    debug: bool = False,
+    hard_pivot: bool = True,
 ) -> None:
     if allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -355,7 +357,7 @@ def main(
 
     optimizer = torch.optim.AdamW(
         params_to_optimize,
-        weight_decay=1e-4, # this wd doesn't matter, I think
+        weight_decay=0.0, # this wd doesn't matter, I think
     )
 
     print(f"# PTI : Loading dataset, do_cache {do_cache}")
@@ -417,7 +419,7 @@ def main(
     last_save_step = 0
 
     # Only show the progress bar once on each machine.
-    progress_bar = tqdm(range(global_step, max_train_steps))
+    progress_bar = tqdm(range(global_step, max_train_steps), position=0, leave=True)
     checkpoint_dir = os.path.join(str(output_dir), "checkpoints")
     if os.path.exists(checkpoint_dir):
         shutil.rmtree(checkpoint_dir)
@@ -427,9 +429,36 @@ def main(
     #embedding_handler.pre_optimize_token_embeddings(train_dataset)
 
 
-    lr_ramp_power = 2.0
+    lr_ramp_power = 1.0
 
     import matplotlib.pyplot as plt
+
+    def plot_torch_hist(parameters, epoch, checkpoint_dir, name, bins=100, min_val=-1, max_val=1, ymax_f = 0.75):
+
+        # Initialize histogram
+        hist_values = torch.zeros(bins).cuda()
+
+        n_values = 0
+
+        # Update histogram batch-wise to save memory
+        for p in parameters:
+            try:
+                hist_values += torch.histc(p.data, bins=bins, min=min_val, max=max_val)
+            except:
+                hist_values += torch.histc(p.float(), bins=bins, min=min_val, max=max_val)
+            n_values += p.numel()
+
+        # Convert to NumPy and plot
+        hist_values_cpu = hist_values.cpu().numpy()
+        plt.figure()
+        plt.hist([min_val + (max_val - min_val) * (i + 0.5) / bins for i in range(bins)], bins, weights=hist_values_cpu)
+        plt.ylim(0, ymax_f * n_values)
+        plt.xlabel('Weight Value')
+        plt.ylabel('Count')
+        plt.title(f'Epoch {epoch} {name} Histogram')
+        plt.savefig(f"{checkpoint_dir}/{name}_histogram_{epoch:04d}.png")
+        plt.close()
+
 
     def plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path='learning_rates.png'):
         epochs = range(first_epoch, num_train_epochs)
@@ -451,24 +480,60 @@ def main(
         plt.title('Learning Rate Curves')
         plt.legend()
         plt.savefig(save_path)
-        plt.show()
+        plt.close()
 
-    plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path=os.path.join(checkpoint_dir, 'learning_rates.png'))
+    # plot the learning rates:
+    def plot_lrs(lora_lrs, ti_lrs, save_path='learning_rates.png'):
+        plt.figure()
+        plt.plot(range(len(lora_lrs)), lora_lrs, label='LoRA LR')
+        plt.plot(range(len(lora_lrs)), ti_lrs, label='TI LR')
+        plt.yscale('log')  # Set y-axis to log scale
+        plt.ylim(1e-5, 3e-3)
+        plt.xlabel('Step')
+        plt.ylabel('Learning Rate')
+        plt.title('Learning Rate Curves')
+        plt.legend()
+        plt.savefig(save_path)
+        plt.close()
 
+    ti_lrs, lora_lrs = [], []
+    #plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path=os.path.join(checkpoint_dir, 'learning_rates.png'))
+
+    # Count the total number of lora parameters
+    total_n_lora_params = sum(p.numel() for p in unet_lora_parameters)
 
     for epoch in range(first_epoch, num_train_epochs):
+        
+        if is_lora:
+            if hard_pivot:
+                if epoch == num_train_epochs // 2:
+                    print("# PTI :  Pivot halfway")
+                    # remove text encoder parameters from the optimizer
+                    optimizer.param_groups = params_to_optimize[:1]
 
-        if is_lora: # Update learning rates for embeddings and lora:
-            completion_f = epoch / num_train_epochs
-            # param_groups[0] goes from 0.0 to lora_lr over the course of training
-            optimizer.param_groups[0]['lr'] = lora_lr * completion_f ** lr_ramp_power
-            # param_groups[1] goes from ti_lr to 0.0 over the course of training
-            optimizer.param_groups[1]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
+                    # remove the optimizer state corresponding to text_encoder_parameters
+                    for param in text_encoder_parameters:
+                        if param in optimizer.state:
+                            del optimizer.state[param]
+
+            else: # Update learning rates for embeddings and lora:
+                completion_f = epoch / num_train_epochs
+                # param_groups[0] goes from 0.0 to lora_lr over the course of training
+                optimizer.param_groups[0]['lr'] = lora_lr * completion_f ** lr_ramp_power
+                # param_groups[1] goes from ti_lr to 0.0 over the course of training
+                optimizer.param_groups[1]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
 
         unet.train()
+
         for step, batch in enumerate(train_dataloader):
             progress_bar.update(1)
             progress_bar.set_description(f"# PTI :step: {global_step}, epoch: {epoch}")
+            progress_bar.refresh()
+
+            if global_step % 200 == 0 and debug and False:
+                plot_torch_hist(unet_lora_parameters, global_step, checkpoint_dir, "lora_weights", bins=100, min_val=-0.5, max_val=0.5, ymax_f = 0.07)
+                plot_torch_hist(embedding_handler.get_trainable_embeddings(), global_step, checkpoint_dir, "embeddings_weights", bins=100, min_val=-0.05, max_val=0.05, ymax_f = 0.05)
+
             global_step += 1
 
             (tok1, tok2), vae_latent, mask = batch
@@ -530,24 +595,31 @@ def main(
             loss = (model_pred - noise).pow(2) * mask
             loss = loss.mean()
 
+            sparsity_lambda = 0.0 # disable L1 norm for now
+            if sparsity_lambda > 0.0:
+                # Compute normalized L1 norm (mean of abs sum) of all lora parameters:
+                l1_norm = sum(p.abs().sum() for p in unet_lora_parameters) / total_n_lora_params
+                loss = loss + sparsity_lambda * l1_norm
+
             loss.backward()
             optimizer.step()
             #lr_scheduler.step()
             optimizer.zero_grad()
 
-            # Print some statistics on the mean and std of unet_lora_parameters:
-            if is_lora and (global_step % 20 == 0):
-                means, std = [], []
-                for param in unet_lora_parameters:
-                    means.append(param.mean())
-                    std.append(param.std())
-                print(f"LORA params mean: {torch.mean(torch.stack(means)):.6f}, std: {torch.mean(torch.stack(std)):.6f}")
-                print(f"LORA-lr: {optimizer.param_groups[0]['lr']:.6f}, TI-lr: {optimizer.param_groups[1]['lr']:.6f}")
-
             # every step, we reset the non-trainable embeddings to the original embeddings.
             embedding_handler.retract_embeddings(print_stds = (global_step % 50 == 0))
 
-            if (global_step % checkpointing_steps == 0) and (global_step > 100):
+            # Track the learning rates for final plotting:
+            try:
+                ti_lrs.append(optimizer.param_groups[1]['lr'])
+            except:
+                ti_lrs.append(0.0)
+
+            lora_lrs.append(optimizer.param_groups[0]['lr'])
+
+            # Print some statistics:
+            if (global_step % checkpointing_steps == 0) and (global_step > 201):
+                plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
                 output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
                 last_save_step = global_step
@@ -563,6 +635,7 @@ def main(
         save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
     else:
         print(f"Skipping final save, {output_save_dir} already exists")
+
 
     return output_save_dir
 

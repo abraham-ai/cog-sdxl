@@ -53,6 +53,11 @@ class Predictor(BasePredictor):
             description=" 'face' / 'style' / 'concept' (default)",
             default="concept",
         ),
+        checkpoint: str = Input(
+            description="Which Stable Diffusion checkpoint to use",
+            choices=checkpoint_options.keys(),
+            default="sdxl-v1.0"
+        ),
         seed: int = Input(
             description="Random seed for reproducible training. Leave empty to use a random seed",
             default=None,
@@ -91,15 +96,15 @@ class Predictor(BasePredictor):
         ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
-            default=6e-4,
+            default=3e-4,
         ),
         lora_lr: float = Input(
             description="Learning rate for training LoRA matrices. Don't alter unless you know what you're doing.",
-            default=5e-5,
+            default=1e-4,
         ),
         ti_weight_decay: float = Input(
             description="weight decay for textual inversion embeddings. Don't alter unless you know what you're doing.",
-            default=1e-5,
+            default=1e-4,
         ),
         lora_weight_decay: float = Input(
             description="weight decay for LoRa. Don't alter unless you know what you're doing.",
@@ -154,11 +159,18 @@ class Predictor(BasePredictor):
             description="Subdirectory where all files will be saved",
             default=str(int(time.time())),
         ),
-        run_local: bool = Input(
+        debug: bool = Input(
             description="for debugging locally only (dont activate this on replicate)",
             default=False,
         ),
+        hard_pivot: bool = Input(
+            description="Use hard freeze for ti_lr. If set to False, will use soft transition of learning rates",
+            default=True,
+        ),
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
+
+        if checkpoint != "sdxl-v1.0":
+            raise ValueError("Only sdxl-v1.0 is supported for now")
 
         if mode == "face":
             mask_target_prompts = "face"
@@ -188,7 +200,7 @@ class Predictor(BasePredictor):
         if not os.path.exists(SDXL_MODEL_CACHE):
             download_weights(SDXL_URL, SDXL_MODEL_CACHE)
 
-        output_dir = os.path.join("lora_models_styles", run_name)
+        output_dir = os.path.join("lora_models_fin", run_name)
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
         os.makedirs(output_dir)
@@ -239,6 +251,7 @@ class Predictor(BasePredictor):
             "left_right_flip_augmentation": left_right_flip_augmentation,
             "checkpointing_steps": checkpointing_steps,
             "run_name": run_name,
+            "hard_pivot": hard_pivot,
         }
 
         with open(os.path.join(output_dir, "training_args.json"), "w") as f:
@@ -273,6 +286,8 @@ class Predictor(BasePredictor):
             lora_rank=lora_rank,
             is_lora=is_lora,
             args_dict=args_dict,
+            debug=debug,
+            hard_pivot=hard_pivot,
         )
 
         validation_grid_img_path = os.path.join(output_save_dir, "validation_grid.jpg")
@@ -291,7 +306,7 @@ class Predictor(BasePredictor):
         print("LORA training finished!")
         print(f"Returning {out_path}")
 
-        if DEBUG_MODE or run_local:
+        if DEBUG_MODE or debug:
             yield Path(out_path)
         else:
             yield CogOutput(files=[Path(out_path)], name=name, thumbnails=[Path(validation_grid_img_path)], attributes=args_dict, isFinal=True, progress=1.0)
