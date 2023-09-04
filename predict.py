@@ -55,7 +55,7 @@ class Predictor(BasePredictor):
         ),
         checkpoint: str = Input(
             description="Which Stable Diffusion checkpoint to use",
-            choices=checkpoint_options.keys(),
+            choices=['sdxl-v1.0'],
             default="sdxl-v1.0"
         ),
         seed: int = Input(
