@@ -21,28 +21,27 @@ run_name             = "final_sweep"
 caption_prefix       = ""  # "" to activate chatgpt
 mask_target_prompts  = ""  # "" to activate chatgpt
 n_exp                = 100  # how many random experiment settings to generate
-min_hamming_distance = 2   # min_n_params that have to be different from any previous experiment to be scheduled
+min_hamming_distance = 1   # min_n_params that have to be different from any previous experiment to be scheduled
 
 # Define training hyperparameters and their possible values
 # The params are sampled stochastically, so if you want to use a specific value more often, just put it in multiple times
 hyperparameters = {
     'lora_training_urls': [
-        'https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny_small.zip', 
-        #'https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/zeke.zip',
-        #'https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_best.zip',
-        'https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/plantoid_small.zip',
-        'https://minio.aws.abraham.fun/creations-stg/6cfe335e35aa0b57fed55e043f77285225e1e36c61a9edc76eb698255c8bb53b.zip',
-        'https://minio.aws.abraham.fun/creations-stg/c04051ca4d30ee595cd24e1ac175ddf6d32572f07f5bb08f2d47cbb1b5a41f18.zip',
+        'https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/koji_all.zip',
+        'https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/koji_small.zip',
+        'https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/koji_color.zip',
+        'https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/koji_black.zip',
         ],
-    'mode': ['concept', 'concept_no_injection'],
+    'mode': ['concept', 'style'],
     'left_right_flip_augmentation': ['True'],
-    'resolution': [896],
-    'hard_pivot': ['True', 'False'],
-    'lora_lr': ['1e-5', '3e-5', '1e-4', '3e-4'],
-    'ti_lr': ['1e-4', '3e-4', '1e-3', '3e-3'],
+    'resolution': [1024],
+    'hard_pivot': ['True'],
+    'lora_lr': ['1e-4'],
+    'ti_lr': ['1e-3'],
     'lora_weight_decay': ['1e-4'],
-    'ti_weight_decay': ['1e-4'],
-    'lora_rank': ['4'],
+    'ti_weight_decay': ['1e-3'],
+    'off_ratio_power': ['0.1'],
+    'lora_rank': ['5'],
     'checkpointing_steps': ['200'],
     'max_train_steps': ['800'],
     'train_batch_size': ['2'],

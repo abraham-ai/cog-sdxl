@@ -230,6 +230,19 @@ def cleanup_prompts_with_chatgpt(
     chatgpt_mode = "chat-completion",
     verbose = True):
 
+    if mode == "concept_injection":
+        chat_gpt_prompt_1 = """
+            I have a set of images, each containing the same concept / figure. I have the following (poor) descriptions for each image:
+            """
+        
+        chat_gpt_prompt_2 = """
+            I want you to:
+            1. Find a good, short name/description of the single central concept that's in all the images. This [Concept Name]  might eg already be present in the descriptions above, pick the most obvious name or words that would fit in all descriptions.
+            2. Insert the text "TOK, [Concept Name]" into all the descriptions above by rephrasing them where needed to naturally contain the text TOK, [Concept Name] while keeping as much of the description as possible.
+
+            Reply by first stating the "Concept Name:", followed by a bullet point list of all the adjusted "Descriptions:".
+            """
+
     if mode == "concept":
         chat_gpt_prompt_1 = """
             I have a set of images, each containing the same concept / figure. I have the following (poor) descriptions for each image:
@@ -237,20 +250,7 @@ def cleanup_prompts_with_chatgpt(
         
         chat_gpt_prompt_2 = """
             I want you to:
-            1. Find a good, short name/description of the single central concept that's in all the images. This [Concept Name] is likely already present in the descriptions above, pick the most obvious name or words to describe it.
-            2. Insert the text "TOK, [Concept Name]" into all the descriptions above by rephrasing them where needed to naturally contain the text TOK, [Concept Name] while keeping as much of the description as possible.
-
-            Reply by first stating the "Concept Name:", followed by a bullet point list of all the adjusted "Descriptions:".
-            """
-
-    if mode == "concept_no_injection":
-        chat_gpt_prompt_1 = """
-            I have a set of images, each containing the same concept / figure. I have the following (poor) descriptions for each image:
-            """
-        
-        chat_gpt_prompt_2 = """
-            I want you to:
-            1. Find a good, short name/description of the single central concept that's in all the images. This [Concept Name] is likely already present in the descriptions above, pick the most obvious name or words to describe it.
+            1. Find a good, short name/description of the single central concept that's in all the images. This [Concept Name] might eg already be present in the descriptions above, pick the most obvious name or words that would fit in all descriptions.
             2. Replace the main concept in each description with the name TOK (rephrase where needed)
             As a result, every description should naturally contain the word TOK while keeping as much of the description as possible.
 
@@ -311,13 +311,13 @@ def cleanup_prompts_with_chatgpt(
 
     if mode == 'face':
         gpt_concept_name = "face"
-    elif mode == 'concept' or mode == 'concept_no_injection':
+    elif mode == 'concept_injection' or mode == 'concept':
         # extract the [Concept Name] from the response:
         for line in gpt_completion.split("\n"):
             if line.startswith("Concept Name:"):
                 gpt_concept_name = line[14:]
                 break
-        if mode == 'concept':
+        if mode == 'concept_injection':
             trigger_text = "TOK, " + gpt_concept_name
 
     elif mode == 'style':
@@ -331,6 +331,15 @@ def cleanup_prompts_with_chatgpt(
 
     return prompts, gpt_concept_name, trigger_text
 
+
+def fix_prompt(prompt: str):
+    # fix some common mistakes:
+    prompt = prompt.replace(",,", ",")
+    prompt = prompt.replace("  ", " ")
+    prompt = prompt.replace(" .", ".")
+    prompt = prompt.replace(" ,", ",")
+
+    return prompt
 
 @torch.no_grad()
 def blip_captioning_dataset(
@@ -381,7 +390,7 @@ def blip_captioning_dataset(
         print(caption)
         captions.append(caption)
 
-    if len(captions)>2 and len(captions)<40 and (len(text) == 0):
+    if len(captions)>3 and len(captions)<40 and (len(text) == 0):
         # use chatgpt to auto-find a good trigger text and insert it naturally into the prompts:
         retry_count = 0
         while retry_count < 4:
@@ -402,11 +411,24 @@ def blip_captioning_dataset(
         else:
             gpt_concept_name, trigger_text = None, text
     else:
+        # simple concat of trigger text with rest of prompt:
         if len(text) == 0:
             print("WARNING: no captioning text was given and there's too few/many prompts to do chatgpt cleanup...")
-        trigger_text = text
-        captions = [trigger_text + ", " + caption for caption in captions]
+
+            if mode == "style":
+                trigger_text = ", in the style of TOK"
+                captions = [caption + trigger_text for caption in captions]
+            else:
+                trigger_text = "a photo of TOK, "
+                captions = [trigger_text + caption for caption in captions]
+        else:
+            trigger_text = text
+            captions = [trigger_text + ", " + caption for caption in captions]
+
+        
         gpt_concept_name = None
+
+    captions = [fix_prompt(caption) for caption in captions]
 
     return captions, trigger_text, gpt_concept_name
 
@@ -719,9 +741,9 @@ def load_and_save_masks_and_captions(
         for mask, com in zip(seg_masks, coms)
     ]
 
-    upscale_images = 1
+    upscale_images = len(images) < 50 # otherwise this will take a long time...
+
     if upscale_images: 
-        print(f"Upscaling {len(images)} images...")
         # upscale images that are smaller than target_size:
         images_to_upscale = []
         indices_to_replace = []
@@ -731,6 +753,7 @@ def load_and_save_masks_and_captions(
                 images_to_upscale.append(image)
                 indices_to_replace.append(idx)
                 
+        print(f"Upscaling {len(images_to_upscale)} of {len(images)} images...")
         upscaled_images = swin_ir_sr(images_to_upscale, target_size=(target_size, target_size))
         
         for i, idx in enumerate(indices_to_replace):

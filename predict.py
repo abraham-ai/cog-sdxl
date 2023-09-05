@@ -64,7 +64,7 @@ class Predictor(BasePredictor):
         ),
         resolution: int = Input(
             description="Square pixel resolution which your images will be resized to for training recommended [768-1024]",
-            default=896,
+            default=960,
         ),
         train_batch_size: int = Input(
             description="Batch size (per device) for training",
@@ -96,11 +96,11 @@ class Predictor(BasePredictor):
         ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
-            default=3e-4,
+            default=1e-3,
         ),
         lora_lr: float = Input(
             description="Learning rate for training LoRA matrices. Don't alter unless you know what you're doing.",
-            default=1e-4,
+            default=2e-4,
         ),
         ti_weight_decay: float = Input(
             description="weight decay for textual inversion embeddings. Don't alter unless you know what you're doing.",
@@ -167,7 +167,14 @@ class Predictor(BasePredictor):
             description="Use hard freeze for ti_lr. If set to False, will use soft transition of learning rates",
             default=True,
         ),
+        off_ratio_power: float = Input(
+            description="How strongly to correct the embedding std vs the avg-std (0=off, 0.05=weak, 0.1=standard)",
+            default=0.1,
+        ),
+
+
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
+        out_root_dir = "lora_models"
 
         if checkpoint != "sdxl-v1.0":
             raise ValueError("Only sdxl-v1.0 is supported for now")
@@ -200,7 +207,7 @@ class Predictor(BasePredictor):
         if not os.path.exists(SDXL_MODEL_CACHE):
             download_weights(SDXL_URL, SDXL_MODEL_CACHE)
 
-        output_dir = os.path.join("lora_models_fin", run_name)
+        output_dir = os.path.join(out_root_dir, run_name)
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
         os.makedirs(output_dir)
@@ -224,6 +231,7 @@ class Predictor(BasePredictor):
         # Make a dict of all the arguments and save it to args.json: 
 
         args_dict = {
+            "name": name,
             "mode": mode,
             "input_images": str(lora_training_urls),
             "trainig_captions": captions,
@@ -252,6 +260,7 @@ class Predictor(BasePredictor):
             "checkpointing_steps": checkpointing_steps,
             "run_name": run_name,
             "hard_pivot": hard_pivot,
+            "off_ratio_power": off_ratio_power,
         }
 
         with open(os.path.join(output_dir, "training_args.json"), "w") as f:
@@ -288,6 +297,7 @@ class Predictor(BasePredictor):
             args_dict=args_dict,
             debug=debug,
             hard_pivot=hard_pivot,
+            off_ratio_power=off_ratio_power,
         )
 
         validation_grid_img_path = os.path.join(output_save_dir, "validation_grid.jpg")

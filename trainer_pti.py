@@ -3,6 +3,7 @@ import fnmatch
 import json
 import math
 import os
+import sys
 import random
 import shutil
 import numpy as np
@@ -13,7 +14,7 @@ import torch.utils.checkpoint
 from diffusers.models.attention_processor import LoRAAttnProcessor, LoRAAttnProcessor2_0
 from diffusers.optimization import get_scheduler
 from safetensors.torch import save_file
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 from dataset_and_utils import (
     PreprocessedDataset,
@@ -68,31 +69,34 @@ def patch_pipe_with_lora(pipe, lora_path):
     handler.load_embeddings(os.path.join(lora_path, "embeddings.pti"))
     return pipe
 
-def prepare_prompt_for_lora(prompt, lora_path, verbose = False):
+def prepare_prompt_for_lora(prompt, lora_path, verbose = True):
     orig_prompt = prompt
+
+    if not os.path.exists(os.path.join(lora_path, "special_params.json")):
+        raise "This concept is from an old lora trainer that was deprecated, please retrain your concept for better results!"
+
     with open(os.path.join(lora_path, "special_params.json"), "r") as f:
         token_map = json.load(f)
 
     with open(os.path.join(lora_path, "training_args.json"), "r") as f:
         training_args = json.load(f)
-        trigger_text  = training_args["trigger_text"]
-        mode          = training_args["mode"]
+        trigger_text = training_args["trigger_text"]
 
     if "<concept>" in prompt:
         prompt = prompt.replace("<concept>", trigger_text)
     else:
-        prompt = trigger_text + " " + prompt
+        prompt = trigger_text + ", " + prompt
 
     for k, v in token_map.items():
         if k in prompt:
             prompt = prompt.replace(k, v)
-
+    
     # fix some common mistakes:
     prompt = prompt.replace(",,", ",")
     prompt = prompt.replace("  ", " ")
     prompt = prompt.replace(" .", ".")
     prompt = prompt.replace(" ,", ",")
-    
+
     if verbose:
         print('-------------------------')
         print("Adjusted prompt for LORA:")
@@ -221,6 +225,7 @@ def main(
     args_dict: dict = {},
     debug: bool = False,
     hard_pivot: bool = True,
+    off_ratio_power: float = 0.1,
 ) -> None:
     if allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -257,7 +262,10 @@ def main(
     embedding_handler = TokenEmbeddingsHandler(
         [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two]
     )
-    embedding_handler.initialize_new_tokens(inserting_toks=inserting_list_tokens)
+    
+    #starting_toks = ["monster", "toy"]
+    starting_toks = None
+    embedding_handler.initialize_new_tokens(inserting_toks=inserting_list_tokens, starting_toks=starting_toks)
 
     text_encoders = [text_encoder_one, text_encoder_two]
 
@@ -502,6 +510,9 @@ def main(
     # Count the total number of lora parameters
     total_n_lora_params = sum(p.numel() for p in unet_lora_parameters)
 
+    #output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
+    #save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
+
     for epoch in range(first_epoch, num_train_epochs):
         
         if is_lora:
@@ -529,6 +540,7 @@ def main(
             progress_bar.update(1)
             progress_bar.set_description(f"# PTI :step: {global_step}, epoch: {epoch}")
             progress_bar.refresh()
+            sys.stdout.flush()
 
             if global_step % 200 == 0 and debug and False:
                 plot_torch_hist(unet_lora_parameters, global_step, checkpoint_dir, "lora_weights", bins=100, min_val=-0.5, max_val=0.5, ymax_f = 0.07)
@@ -607,7 +619,7 @@ def main(
             optimizer.zero_grad()
 
             # every step, we reset the non-trainable embeddings to the original embeddings.
-            embedding_handler.retract_embeddings(print_stds = (global_step % 50 == 0))
+            embedding_handler.retract_embeddings(off_ratio_power = off_ratio_power, print_stds = (global_step % 50 == 0))
 
             # Track the learning rates for final plotting:
             try:
@@ -618,7 +630,7 @@ def main(
             lora_lrs.append(optimizer.param_groups[0]['lr'])
 
             # Print some statistics:
-            if (global_step % checkpointing_steps == 0) and (global_step > 201):
+            if (global_step % checkpointing_steps == 0) and (global_step > 0):
                 plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
                 output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
@@ -626,7 +638,7 @@ def main(
 
 
     # final_save
-    if (global_step - last_save_step) > 50:
+    if (global_step - last_save_step) > 201:
         output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
     else:
         output_save_dir = f"{checkpoint_dir}/checkpoint-{last_save_step}"
