@@ -200,13 +200,14 @@ def load_image_with_orientation(path, mode = "RGB"):
 
     return image.convert(mode)
 
-def is_image_file(file_path):
+def is_image_or_txt_file(file_path):
     try:
         with Image.open(file_path) as img:
             img.verify()
         return True
-    except:
-        return False
+    except: 
+        # check if the string filepath is a txt file
+        return file_path.endswith(".txt")
 
 def flatten_dir(root_dir):
     try:
@@ -262,7 +263,7 @@ def prep_img_dir(target_folder):
         for filename in os.listdir(target_folder):
             file_path = os.path.join(target_folder, filename)
 
-            if not is_image_file(file_path):
+            if not is_image_or_txt_file(file_path):
                 os.remove(file_path)
             else:
                 clean_and_prep_image(file_path)

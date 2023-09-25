@@ -88,7 +88,12 @@ def preprocess(
         assert False, "input_images_filetype must be zip or tar"
     """
 
-    download_and_prep_training_data(input_zip_path, TEMP_IN_DIR)
+    if 1:
+        download_and_prep_training_data(input_zip_path, TEMP_IN_DIR)
+    else:
+        print("--------------------------")
+        print("Skipping download_and_prep_training_data!!!")
+        TEMP_IN_DIR = "/data/xander/Projects/cog/xander_eden_stuff/clipxdata/clipx_train"
 
     output_dir: str = TEMP_OUT_DIR
 
@@ -344,6 +349,7 @@ def fix_prompt(prompt: str):
 @torch.no_grad()
 def blip_captioning_dataset(
     images: List[Image.Image],
+    input_captions: List[str],
     mode: str,  # face / concept / style
     text: Optional[str] = None,  # caption_prefix="a cartoon of TOK, the yellow bananaman figure, " 
     model_id: Literal[
@@ -378,14 +384,17 @@ def blip_captioning_dataset(
     print(f"Input captioning text: {text}")
     print("Substitution tokens:", substitution_tokens)
 
-    for image in tqdm(images):
-        inputs = processor(image, return_tensors="pt").to(device, torch.float16)
-        out = model.generate(**inputs, max_length=150, do_sample=True, top_k=50, temperature=0.7)
-        caption = processor.decode(out[0], skip_special_tokens=True)
+    for i, image in enumerate(tqdm(images)):
+        if input_captions[i] is None:
+            inputs = processor(image, return_tensors="pt").to(device, torch.float16)
+            out = model.generate(**inputs, max_length=150, do_sample=True, top_k=50, temperature=0.7)
+            caption = processor.decode(out[0], skip_special_tokens=True)
 
-        # BLIP 2 lowercases all caps tokens. This should properly replace them w/o messing up subwords.
-        for token in substitution_tokens:
-            caption = caption.replace(f" {token.lower()} ", f" {token} ")
+            # BLIP 2 lowercases all caps tokens. This should properly replace them w/o messing up subwords.
+            for token in substitution_tokens:
+                caption = caption.replace(f" {token.lower()} ", f" {token} ")
+        else:
+            caption = input_captions[i]
 
         print(caption)
         captions.append(caption)
@@ -673,8 +682,8 @@ def load_and_save_masks_and_captions(
 
     # load images
     if isinstance(files, str):
-        # check if it is a directory
         if os.path.isdir(files):
+            print("Scanning directory for images...")
             # get all the .png .jpg in the directory
             files = (
                 _find_files("*.png", files)
@@ -689,19 +698,31 @@ def load_and_save_masks_and_captions(
         if n_length == -1:
             n_length = len(files)
         files = sorted(files)[:n_length]
-        print(files)
         
-    images = [load_image_with_orientation(file) for file in files]
+    images, captions = [], []
+    for file in files:
+        images.append(load_image_with_orientation(file))
+        caption_file = os.path.splitext(file)[0] + ".txt"
+        print(caption_file)
+        if os.path.exists(caption_file):
+            with open(caption_file, "r") as f:
+                captions.append(f.read())
+        else:
+            captions.append(None)
+
     n_training_imgs = len(images)
+    n_captions      = len([c for c in captions if c is not None])
+    print(f"Loaded {n_training_imgs} images, {n_captions} of which have captions.")
 
     if add_lr_flips and len(images) < 40:
         print(f"Adding LR flips... (doubling the number of images from {n_training_imgs} to {n_training_imgs*2})")
-        images = images + [image.transpose(Image.FLIP_LEFT_RIGHT) for image in images]
+        images   = images + [image.transpose(Image.FLIP_LEFT_RIGHT) for image in images]
+        captions = captions + captions
 
     # captions
     print(f"Generating {len(images)} captions...")
     captions, trigger_text, gpt_concept_name = blip_captioning_dataset(
-        images, mode, text=caption_text, substitution_tokens=substitution_tokens
+        images, captions, mode, text=caption_text, substitution_tokens=substitution_tokens
     )
 
     if gpt_concept_name is not None and ((mask_target_prompts is None) or (mask_target_prompts == "")):

@@ -17,7 +17,7 @@ def hamming_distance(dict1, dict2):
 
 # Setup the base experiment config:
 #lora_training_urls    = "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/steel.zip"
-run_name             = "final_sweep"
+run_name             = "style_lora"
 caption_prefix       = ""  # "" to activate chatgpt
 mask_target_prompts  = ""  # "" to activate chatgpt
 n_exp                = 100  # how many random experiment settings to generate

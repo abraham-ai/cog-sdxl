@@ -36,35 +36,44 @@ def patch_pipe_with_lora(pipe, lora_path):
         lora_rank      = training_args["lora_rank"]
     
     unet = pipe.unet
-    tensors = load_file(os.path.join(lora_path, "lora.safetensors"))
-    unet_lora_attn_procs = {}
 
-    for name, attn_processor in unet.attn_processors.items():
-        cross_attention_dim = (
-            None
-            if name.endswith("attn1.processor")
-            else unet.config.cross_attention_dim
-        )
-        if name.startswith("mid_block"):
-            hidden_size = unet.config.block_out_channels[-1]
-        elif name.startswith("up_blocks"):
-            block_id = int(name[len("up_blocks.")])
-            hidden_size = list(reversed(unet.config.block_out_channels))[
-                block_id
-            ]
-        elif name.startswith("down_blocks"):
-            block_id = int(name[len("down_blocks.")])
-            hidden_size = unet.config.block_out_channels[block_id]
+    lora_safetensors_path = os.path.join(lora_path, "lora.safetensors")
 
-        module = LoRAAttnProcessor2_0(
-            hidden_size=hidden_size,
-            cross_attention_dim=cross_attention_dim,
-            rank=lora_rank,
-        )
-        unet_lora_attn_procs[name] = module.to("cuda")
+    if os.path.exists(lora_safetensors_path):
+        tensors = load_file(lora_safetensors_path)
+        unet_lora_attn_procs = {}
+        for name, attn_processor in unet.attn_processors.items():
+            cross_attention_dim = (
+                None
+                if name.endswith("attn1.processor")
+                else unet.config.cross_attention_dim
+            )
+            if name.startswith("mid_block"):
+                hidden_size = unet.config.block_out_channels[-1]
+            elif name.startswith("up_blocks"):
+                block_id = int(name[len("up_blocks.")])
+                hidden_size = list(reversed(unet.config.block_out_channels))[
+                    block_id
+                ]
+            elif name.startswith("down_blocks"):
+                block_id = int(name[len("down_blocks.")])
+                hidden_size = unet.config.block_out_channels[block_id]
 
-    unet.set_attn_processor(unet_lora_attn_procs)
+            module = LoRAAttnProcessor2_0(
+                hidden_size=hidden_size,
+                cross_attention_dim=cross_attention_dim,
+                rank=lora_rank,
+            )
+            unet_lora_attn_procs[name] = module.to("cuda")
+
+        unet.set_attn_processor(unet_lora_attn_procs)
+
+    else:
+        unet_path = os.path.join(lora_path, "unet.safetensors")
+        tensors = load_file(unet_path)
+
     unet.load_state_dict(tensors, strict=False)
+    
     handler = TokenEmbeddingsHandler([pipe.text_encoder, pipe.text_encoder_2], [pipe.tokenizer, pipe.tokenizer_2])
     handler.load_embeddings(os.path.join(lora_path, "embeddings.pti"))
     return pipe
@@ -108,7 +117,7 @@ def prepare_prompt_for_lora(prompt, lora_path, verbose = True):
     return prompt
 
 @torch.no_grad()
-def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, device = "cuda:0"):
+def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.8, n_imgs = 4, device = "cuda:0"):
     validation_prompts = [
             'a statue of <concept>',
             'a masterful oil painting portraying <concept> with vibrant colors, brushstrokes and textures',
@@ -140,11 +149,16 @@ def render_images(lora_path, train_step, seed, lora_scale = 0.8, n_imgs = 4, dev
                 "guidance_scale": 7,
                 }
 
+    if is_lora:
+        cross_attention_kwargs = {"scale": lora_scale}
+    else:
+        cross_attention_kwargs = None
+
     with torch.cuda.amp.autocast():
         for i in range(n_imgs):
             pipeline_args["prompt"] = validation_prompts[i]
             print(f"Rendering validation img with prompt: {validation_prompts[i]}")
-            image = pipeline(**pipeline_args, generator=generator, cross_attention_kwargs = {"scale": lora_scale}).images[0]
+            image = pipeline(**pipeline_args, generator=generator, cross_attention_kwargs = cross_attention_kwargs).images[0]
             image.save(os.path.join(lora_path, f"img_{train_step:04d}_{i}.jpg"), format="JPEG", quality=95)
 
     # create img_grid:
@@ -181,7 +195,7 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
         json.dump(args_dict, f, indent=4)
 
     if make_images:
-        render_images(f"{output_dir}", global_step, seed)
+        render_images(f"{output_dir}", global_step, seed, is_lora)
 
 
 
@@ -282,6 +296,8 @@ def main(
                 param.requires_grad = False
 
     unet_param_to_optimize_names = []
+    unet_lora_parameters = []
+
     if not is_lora:
         WHITELIST_PATTERNS = [
             # "*.attn*.weight",
@@ -310,7 +326,7 @@ def main(
             {
                 "params": text_encoder_parameters,
                 "lr": ti_lr,
-                "weight_decay": weight_decay_ti,
+                "weight_decay": ti_weight_decay,
             },
         ]
 
@@ -319,7 +335,6 @@ def main(
         # Do lora-training instead.
         unet.requires_grad_(False)
         unet_lora_attn_procs = {}
-        unet_lora_parameters = []
         for name, attn_processor in unet.attn_processors.items():
             cross_attention_dim = (
                 None
@@ -496,7 +511,7 @@ def main(
         plt.plot(range(len(lora_lrs)), lora_lrs, label='LoRA LR')
         plt.plot(range(len(lora_lrs)), ti_lrs, label='TI LR')
         plt.yscale('log')  # Set y-axis to log scale
-        plt.ylim(1e-5, 3e-3)
+        plt.ylim(1e-6, 3e-3)
         plt.xlabel('Step')
         plt.ylabel('Learning Rate')
         plt.title('Learning Rate Curves')
@@ -533,6 +548,27 @@ def main(
                 optimizer.param_groups[0]['lr'] = lora_lr * completion_f ** lr_ramp_power
                 # param_groups[1] goes from ti_lr to 0.0 over the course of training
                 optimizer.param_groups[1]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
+        else: # full finetuning
+            if hard_pivot:
+                if epoch == num_train_epochs // 2:
+                    print("# PTI :  Pivot halfway")
+                    # remove text encoder parameters from the optimizer
+                    optimizer.param_groups = params_to_optimize[:1]
+
+                    # remove the optimizer state corresponding to text_encoder_parameters
+                    for param in text_encoder_parameters:
+                        if param in optimizer.state:
+                            del optimizer.state[param]
+
+                    optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['lr'] * 3
+
+            else: # Update learning rates for unet:
+                completion_f = epoch / num_train_epochs
+                # param_groups[0] goes from 0.0 to lora_lr over the course of training
+                optimizer.param_groups[0]['lr'] = unet_learning_rate * completion_f ** lr_ramp_power
+                # param_groups[1] goes from ti_lr to 0.0 over the course of training
+                optimizer.param_groups[1]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
+
 
         unet.train()
 

@@ -196,12 +196,10 @@ class Predictor(BasePredictor):
         all_token_lists = []
         for token in inserting_list_tokens:
             n_tok = int(token.split(":")[1])
-
             token_dict[token.split(":")[0]] = "".join(
                 [f"<s{i + running_tok_cnt}>" for i in range(n_tok)]
             )
             all_token_lists.extend([f"<s{i + running_tok_cnt}>" for i in range(n_tok)])
-
             running_tok_cnt += n_tok
 
         if not os.path.exists(SDXL_MODEL_CACHE):
