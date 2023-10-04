@@ -451,7 +451,6 @@ def main(
     # Experimental: warmup the token embeddings using CLIP-similarity:
     #embedding_handler.pre_optimize_token_embeddings(train_dataset)
 
-
     lr_ramp_power = 1.0
 
     import matplotlib.pyplot as plt
@@ -568,7 +567,6 @@ def main(
                 optimizer.param_groups[0]['lr'] = unet_learning_rate * completion_f ** lr_ramp_power
                 # param_groups[1] goes from ti_lr to 0.0 over the course of training
                 optimizer.param_groups[1]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
-
 
         unet.train()
 

@@ -176,6 +176,12 @@ class Predictor(BasePredictor):
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
         out_root_dir = "lora_models"
 
+        print(max_train_steps)
+        print(max_train_steps)
+        print(max_train_steps)
+        print(max_train_steps)
+        print(max_train_steps)
+
         if checkpoint != "sdxl-v1.0":
             raise ValueError("Only sdxl-v1.0 is supported for now")
 
@@ -210,8 +216,6 @@ class Predictor(BasePredictor):
             shutil.rmtree(output_dir)
         os.makedirs(output_dir)
 
-        print(lora_training_urls)
-
         input_dir, n_imgs, trigger_text, segmentation_prompt, captions = preprocess(
             output_dir,
             mode,
@@ -232,7 +236,6 @@ class Predictor(BasePredictor):
             "name": name,
             "mode": mode,
             "input_images": str(lora_training_urls),
-            "trainig_captions": captions,
             "num_training_images": n_imgs,
             "seed": seed,
             "resolution": resolution,
@@ -259,6 +262,7 @@ class Predictor(BasePredictor):
             "run_name": run_name,
             "hard_pivot": hard_pivot,
             "off_ratio_power": off_ratio_power,
+            "trainig_captions": captions,
         }
 
         with open(os.path.join(output_dir, "training_args.json"), "w") as f:

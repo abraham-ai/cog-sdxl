@@ -88,12 +88,9 @@ def preprocess(
         assert False, "input_images_filetype must be zip or tar"
     """
 
-    if 1:
-        download_and_prep_training_data(input_zip_path, TEMP_IN_DIR)
-    else:
-        print("--------------------------")
-        print("Skipping download_and_prep_training_data!!!")
-        TEMP_IN_DIR = "/data/xander/Projects/cog/xander_eden_stuff/clipxdata/clipx_train"
+    download_and_prep_training_data(input_zip_path, TEMP_IN_DIR)
+    #print("Skipping download_and_prep_training_data!!!")
+    #TEMP_IN_DIR = "clipx_train"
 
     output_dir: str = TEMP_OUT_DIR
 
@@ -198,26 +195,29 @@ def clipseg_mask_generator(
     for image, prompt in tqdm(zip(images, target_prompts)):
         original_size = image.size
 
-        inputs = processor(
-            text=[prompt, ""],
-            images=[image] * 2,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        ).to(device)
+        if prompt != "":
+            inputs = processor(
+                text=[prompt, ""],
+                images=[image] * 2,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt",
+            ).to(device)
 
-        outputs = model(**inputs)
+            outputs = model(**inputs)
 
-        logits = outputs.logits
-        probs = torch.nn.functional.softmax(logits / temp, dim=0)[0]
-        probs = (probs + bias).clamp_(0, 1)
-        probs = 255 * probs / probs.max()
+            logits = outputs.logits
+            probs = torch.nn.functional.softmax(logits / temp, dim=0)[0]
+            probs = (probs + bias).clamp_(0, 1)
+            probs = 255 * probs / probs.max()
 
-        # make mask greyscale
-        mask = Image.fromarray(probs.cpu().numpy()).convert("L")
+            # make mask greyscale
+            mask = Image.fromarray(probs.cpu().numpy()).convert("L")
 
-        # resize mask to original size
-        mask = mask.resize(original_size)
+            # resize mask to original size
+            mask = mask.resize(original_size)
+        else:
+            mask = Image.new("L", original_size, 255)
 
         masks.append(mask)
 
@@ -703,7 +703,6 @@ def load_and_save_masks_and_captions(
     for file in files:
         images.append(load_image_with_orientation(file))
         caption_file = os.path.splitext(file)[0] + ".txt"
-        print(caption_file)
         if os.path.exists(caption_file):
             with open(caption_file, "r") as f:
                 captions.append(f.read())
@@ -735,7 +734,7 @@ def load_and_save_masks_and_captions(
         temp = 999
 
     print(f"Generating {len(images)} masks...")
-    if not use_face_detection_instead:
+    if not use_face_detection_instead: # TODO make this faster when no prompt is given
         seg_masks = clipseg_mask_generator(
             images=images, target_prompts=mask_target_prompts, temp=temp
         )
@@ -745,6 +744,7 @@ def load_and_save_masks_and_captions(
             print("WARNING you are applying face detection while also doing left-right flips, this might not be what you intended?")
         seg_masks = face_mask_google_mediapipe(images=images)
 
+    print("Masks generated! Cropping images to center of mass...")
     # find the center of mass of the mask
     if crop_based_on_salience:
         coms = [_center_of_mass(mask) for mask in seg_masks]
@@ -752,6 +752,7 @@ def load_and_save_masks_and_captions(
         coms = [(image.size[0] / 2, image.size[1] / 2) for image in images]
         
     # based on the center of mass, crop the image to a square
+    print("Cropping squares...")
     images = [
         _crop_to_square(image, com, resize_to=None) 
         for image, com in zip(images, coms)
@@ -780,14 +781,13 @@ def load_and_save_masks_and_captions(
         for i, idx in enumerate(indices_to_replace):
             images[idx] = upscaled_images[i]
 
-
+    print("Resizing images to training size...")
     images = [
         image.resize((target_size, target_size), Image.Resampling.LANCZOS)
         for image in images
     ]
 
     data = []
-
     # clean TEMP_OUT_DIR first
     if os.path.exists(output_dir):
         for file in os.listdir(output_dir):
@@ -796,13 +796,14 @@ def load_and_save_masks_and_captions(
     os.makedirs(output_dir, exist_ok=True)
 
     # iterate through the images, masks, and captions and add a row to the dataframe for each
+    print("Saving final training dataset...")
     for idx, (image, mask, caption) in enumerate(zip(images, seg_masks, captions)):
-        image_name = f"{idx}.src.png"
-        mask_file = f"{idx}.mask.png"
 
+        image_name = f"{idx}.src.jpg"
+        mask_file = f"{idx}.mask.jpg"
         # save the image and mask files
-        image.save(os.path.join(output_dir, image_name))
-        mask.save(os.path.join(output_dir, mask_file))
+        image.save(os.path.join(output_dir, image_name), quality=95)
+        mask.save(os.path.join(output_dir, mask_file), quality=95)
 
         # add a new row to the dataframe with the file names and caption
         data.append(
@@ -812,6 +813,7 @@ def load_and_save_masks_and_captions(
     df = pd.DataFrame(columns=["image_path", "mask_path", "caption"], data=data)
     # save the dataframe to a CSV file
     df.to_csv(os.path.join(output_dir, "captions.csv"), index=False)
+    print("---> Training data 100% ready to go!")
 
     return n_training_imgs, trigger_text, mask_target_prompts, captions
 
