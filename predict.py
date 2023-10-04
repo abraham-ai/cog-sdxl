@@ -176,12 +176,6 @@ class Predictor(BasePredictor):
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
         out_root_dir = "lora_models"
 
-        print(max_train_steps)
-        print(max_train_steps)
-        print(max_train_steps)
-        print(max_train_steps)
-        print(max_train_steps)
-
         if checkpoint != "sdxl-v1.0":
             raise ValueError("Only sdxl-v1.0 is supported for now")
 
