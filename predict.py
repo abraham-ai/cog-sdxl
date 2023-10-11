@@ -50,8 +50,8 @@ class Predictor(BasePredictor):
             default=None
         ),
         mode: str = Input(
-            description=" 'face' / 'style' / 'concept' (default)",
-            default="concept",
+            description=" 'face' / 'style' / 'object' (default)",
+            default="object",
         ),
         checkpoint: str = Input(
             description="Which Stable Diffusion checkpoint to use",
@@ -181,6 +181,8 @@ class Predictor(BasePredictor):
 
         if mode == "face":
             mask_target_prompts = "face"
+        if mode == "object":
+            mode = "concept"
 
         print("cog:predict:train_lora")
 
