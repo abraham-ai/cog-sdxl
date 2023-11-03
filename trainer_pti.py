@@ -216,9 +216,9 @@ def main(
     max_train_steps: Optional[int] = None,
     checkpointing_steps: int = 500000,  # default to no checkpoints
     gradient_accumulation_steps: int = 1,  # todo
-    unet_learning_rate: float = 1e-5,
+    unet_learning_rate: float = 1.0,
     ti_lr: float = 3e-4,
-    lora_lr: float = 1e-4,
+    lora_lr: float = 1.0,
     lora_weight_decay: float = 1e-4,
     ti_weight_decay: float = 0.0,
     scale_lr: bool = False,
@@ -367,21 +367,47 @@ def main(
 
         params_to_optimize = [
             {
-                "params": unet_lora_parameters,
-                "lr": lora_lr,
-                "weight_decay": lora_weight_decay,
-            },
-            {
                 "params": text_encoder_parameters,
                 "lr": ti_lr,
                 "weight_decay": ti_weight_decay,
             },
         ]
 
-    optimizer = torch.optim.AdamW(
-        params_to_optimize,
-        weight_decay=0.0, # this wd doesn't matter, I think
-    )
+        params_to_optimize_prodigy = [
+            {
+                "params": unet_lora_parameters,
+                "lr": 1.0,
+                "weight_decay": 0.001,
+            },
+        ]
+    
+    optimizer_type = "prodigy"
+
+    if optimizer_type != "prodigy":
+        optimizer = torch.optim.AdamW(
+            params_to_optimize,
+            weight_decay=0.0, # this wd doesn't matter, I think
+        )
+    else:        
+        try:
+            import prodigyopt
+        except ImportError:
+            raise ImportError("To use Prodigy, please install the prodigyopt library: `pip install prodigyopt`")
+
+        print("Instantiating prodigy optimizer!")
+        optimizer_prod = prodigyopt.Prodigy(
+                        params_to_optimize_prodigy,
+                        lr=1.0,
+                        decouple=True,
+                        use_bias_correction=True,
+                        safeguard_warmup=True,
+                        weight_decay=0.001
+                    )
+        
+        optimizer = torch.optim.AdamW(
+            params_to_optimize,
+            weight_decay=0.0, # this wd doesn't matter, I think
+        )
 
     print(f"# PTI : Loading dataset, do_cache {do_cache}")
 
@@ -532,7 +558,9 @@ def main(
         if is_lora:
             if hard_pivot:
                 if epoch == num_train_epochs // 2:
+                    print("----------------------")
                     print("# PTI :  Pivot halfway")
+                    print("----------------------")
                     # remove text encoder parameters from the optimizer
                     optimizer.param_groups = params_to_optimize[:1]
 
@@ -540,6 +568,8 @@ def main(
                     for param in text_encoder_parameters:
                         if param in optimizer.state:
                             del optimizer.state[param]
+
+                    optimizer = None
 
             else: # Update learning rates for embeddings and lora:
                 completion_f = epoch / num_train_epochs
@@ -647,10 +677,15 @@ def main(
                 l1_norm = sum(p.abs().sum() for p in unet_lora_parameters) / total_n_lora_params
                 loss = loss + sparsity_lambda * l1_norm
 
+            print(f"{loss.item():.4f}")
             loss.backward()
-            optimizer.step()
-            #lr_scheduler.step()
-            optimizer.zero_grad()
+
+            if optimizer is not None:
+                optimizer.step()
+                optimizer.zero_grad()
+            
+            optimizer_prod.step()
+            optimizer_prod.zero_grad()
 
             # every step, we reset the non-trainable embeddings to the original embeddings.
             embedding_handler.retract_embeddings(off_ratio_power = off_ratio_power, print_stds = (global_step % 50 == 0))
@@ -661,7 +696,7 @@ def main(
             except:
                 ti_lrs.append(0.0)
 
-            lora_lrs.append(optimizer.param_groups[0]['lr'])
+            lora_lrs.append(optimizer_prod.param_groups[0]['lr'])
 
             # Print some statistics:
             if (global_step % checkpointing_steps == 0) and (global_step > 0):

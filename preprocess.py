@@ -293,7 +293,8 @@ def cleanup_prompts_with_chatgpt(
     final_chatgpt_prompt = chat_gpt_prompt_1 + "\n- " + "\n- ".join(prompts) + "\n\n" + chat_gpt_prompt_2
     print("Final chatgpt prompt:")
     print(final_chatgpt_prompt)
-
+    print("---------------------------")
+    print("Calling chatgpt...")
     response = openai.ChatCompletion.create(
         #model="gpt-3.5-turbo",
         model="gpt-4",

@@ -90,29 +90,17 @@ class Predictor(BasePredictor):
             description="Whether to use LoRA training. If set to False, will use Full fine tuning",
             default=True,
         ),
-        unet_learning_rate: float = Input(
-            description="Learning rate for the U-Net (only used for full finetuning, not for LORA's). Recommended between `1e-6` to `1e-5`.",
-            default=1e-6,
-        ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
             default=1e-3,
-        ),
-        lora_lr: float = Input(
-            description="Learning rate for training LoRA matrices. Don't alter unless you know what you're doing.",
-            default=2e-4,
         ),
         ti_weight_decay: float = Input(
             description="weight decay for textual inversion embeddings. Don't alter unless you know what you're doing.",
             default=1e-4,
         ),
-        lora_weight_decay: float = Input(
-            description="weight decay for LoRa. Don't alter unless you know what you're doing.",
-            default=1e-4,
-        ),
         lora_rank: int = Input(
-            description="Rank of LoRA embeddings. For faces 4 is good, for complex concepts you can try 6 or 8",
-            default=4,
+            description="Rank of LoRA embeddings. For faces 5 is good, for complex concepts / styles you can try 8 or 12",
+            default=5,
         ),
         lr_scheduler: str = Input(
             description="Learning rate scheduler to use for training",
@@ -227,7 +215,6 @@ class Predictor(BasePredictor):
         )
 
         # Make a dict of all the arguments and save it to args.json: 
-
         args_dict = {
             "name": name,
             "mode": mode,
@@ -239,11 +226,8 @@ class Predictor(BasePredictor):
             "num_train_epochs": num_train_epochs,
             "max_train_steps": max_train_steps,
             "is_lora": is_lora,
-            "unet_learning_rate": unet_learning_rate,
             "ti_lr": ti_lr,
-            "lora_lr": lora_lr,
             "ti_weight_decay": ti_weight_decay,
-            "lora_weight_decay": lora_weight_decay,
             "lora_rank": lora_rank,
             "lr_scheduler": lr_scheduler,
             "lr_warmup_steps": lr_warmup_steps,
@@ -274,11 +258,8 @@ class Predictor(BasePredictor):
             num_train_epochs=num_train_epochs,
             max_train_steps=max_train_steps,
             gradient_accumulation_steps=1,
-            unet_learning_rate=unet_learning_rate,
             ti_lr=ti_lr,
-            lora_lr=lora_lr,
             ti_weight_decay=ti_weight_decay,
-            lora_weight_decay=lora_weight_decay,
             lr_scheduler=lr_scheduler,
             lr_warmup_steps=lr_warmup_steps,
             token_dict=token_dict,
