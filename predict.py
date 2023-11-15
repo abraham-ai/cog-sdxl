@@ -49,7 +49,7 @@ class Predictor(BasePredictor):
             description="Training images for new LORA concept (can be image urls or a .zip file of images)", 
             default=None
         ),
-        mode: str = Input(
+        concept_mode: str = Input(
             description=" 'face' / 'style' / 'object' (default)",
             default="object",
         ),
@@ -167,12 +167,10 @@ class Predictor(BasePredictor):
         if checkpoint != "sdxl-v1.0":
             raise ValueError("Only sdxl-v1.0 is supported for now")
 
-        if mode == "face":
+        if concept_mode == "face":
             mask_target_prompts = "face"
-        if mode == "object":
-            mode = "concept"
 
-        print("cog:predict:train_lora")
+        print(f"cog:predict:train_lora:{concept_mode}")
 
         # Hard-code token_map for now. Make it configurable once we support multiple concepts or user-uploaded caption csv.
         token_string = "TOK"
@@ -202,7 +200,7 @@ class Predictor(BasePredictor):
 
         input_dir, n_imgs, trigger_text, segmentation_prompt, captions = preprocess(
             output_dir,
-            mode,
+            concept_mode,
             input_zip_path=lora_training_urls,
             caption_text=caption_prefix,
             mask_target_prompts=mask_target_prompts,
@@ -217,7 +215,7 @@ class Predictor(BasePredictor):
         # Make a dict of all the arguments and save it to args.json: 
         args_dict = {
             "name": name,
-            "mode": mode,
+            "concept_mode": concept_mode,
             "input_images": str(lora_training_urls),
             "num_training_images": n_imgs,
             "seed": seed,

@@ -38,7 +38,7 @@ from io_utils import download_and_prep_training_data
 
 def preprocess(
     working_directory,
-    mode, 
+    concept_mode, 
     input_zip_path: Path,
     caption_text: str,
     mask_target_prompts: str,
@@ -95,7 +95,7 @@ def preprocess(
     output_dir: str = TEMP_OUT_DIR
 
     n_training_imgs, trigger_text, segmentation_prompt, captions = load_and_save_masks_and_captions(
-        mode, 
+        concept_mode, 
         files=TEMP_IN_DIR,
         output_dir=output_dir,
         caption_text=caption_text,
@@ -225,17 +225,18 @@ def clipseg_mask_generator(
 
 import re
 import openai
+from openai import OpenAI
 from dotenv import load_dotenv
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def cleanup_prompts_with_chatgpt(
     prompts, 
-    mode,    # face / concept / style
+    concept_mode,    # face / object / style
     chatgpt_mode = "chat-completion",
     verbose = True):
 
-    if mode == "concept_injection":
+    if concept_mode == "object_injection":
         chat_gpt_prompt_1 = """
             I have a set of images, each containing the same concept / figure. I have the following (poor) descriptions for each image:
             """
@@ -248,7 +249,7 @@ def cleanup_prompts_with_chatgpt(
             Reply by first stating the "Concept Name:", followed by a bullet point list of all the adjusted "Descriptions:".
             """
 
-    if mode == "concept":
+    if concept_mode == "object":
         chat_gpt_prompt_1 = """
             I have a set of images, each containing the same concept / figure. I have the following (poor) descriptions for each image:
             """
@@ -262,7 +263,7 @@ def cleanup_prompts_with_chatgpt(
             Reply by first stating the "Concept Name:", followed by a bullet point list of all the adjusted "Descriptions:".
             """
 
-    elif mode == "face":
+    elif concept_mode == "face":
         chat_gpt_prompt_1 = """
             I have a set of images, each containing a photo of a single person named TOK. I have the following (poor) descriptions for each image:
             """
@@ -276,7 +277,7 @@ def cleanup_prompts_with_chatgpt(
             Reply by first stating the "Concept Name: TOK", followed by a bullet point list of all the adjusted "Descriptions:".
             """
 
-    elif mode == "style":
+    elif concept_mode == "style":
         chat_gpt_prompt_1 = """
             I have a set of images sharing a single style / aesthetic named TOK. I have the following (poor) descriptions for each image:
             """
@@ -295,13 +296,15 @@ def cleanup_prompts_with_chatgpt(
     print(final_chatgpt_prompt)
     print("---------------------------")
     print("Calling chatgpt...")
-    response = openai.ChatCompletion.create(
-        #model="gpt-3.5-turbo",
-        model="gpt-4",
-        messages=[
+
+    response = client.chat.completions.create(
+            model="gpt-4-1106-preview",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": final_chatgpt_prompt},
-            ], 
-    )
+            ]
+            )
+
     gpt_completion = response.choices[0].message.content
 
     if verbose: # pretty print the full response json:
@@ -315,18 +318,18 @@ def cleanup_prompts_with_chatgpt(
 
     trigger_text = "TOK"
 
-    if mode == 'face':
+    if concept_mode == 'face':
         gpt_concept_name = "face"
-    elif mode == 'concept_injection' or mode == 'concept':
+    elif concept_mode == 'object_injection' or mode == 'object':
         # extract the [Concept Name] from the response:
         for line in gpt_completion.split("\n"):
             if line.startswith("Concept Name:"):
                 gpt_concept_name = line[14:]
                 break
-        if mode == 'concept_injection':
+        if concept_mode == 'object_injection':
             trigger_text = "TOK, " + gpt_concept_name
 
-    elif mode == 'style':
+    elif concept_mode == 'style':
         # extract the [Style Name] from the response:
         for line in gpt_completion.split("\n"):
             if line.startswith("Style Name:"):
@@ -351,7 +354,7 @@ def fix_prompt(prompt: str):
 def blip_captioning_dataset(
     images: List[Image.Image],
     input_captions: List[str],
-    mode: str,  # face / concept / style
+    concept_mode: str,  # face / object / style
     text: Optional[str] = None,  # caption_prefix="a cartoon of TOK, the yellow bananaman figure, " 
     model_id: Literal[
         "Salesforce/blip-image-captioning-large",
@@ -403,9 +406,11 @@ def blip_captioning_dataset(
     if len(captions)>3 and len(captions)<40 and (len(text) == 0):
         # use chatgpt to auto-find a good trigger text and insert it naturally into the prompts:
         retry_count = 0
-        while retry_count < 4:
+        while retry_count < 3:
+            captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode)
+                
             try:
-                captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, mode)
+                captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode)
                 n_toks = 0
                 for caption in captions:
                     if "TOK" in caption:
@@ -425,7 +430,7 @@ def blip_captioning_dataset(
         if len(text) == 0:
             print("WARNING: no captioning text was given and there's too few/many prompts to do chatgpt cleanup...")
 
-            if mode == "style":
+            if concept_mode == "style":
                 trigger_text = ", in the style of TOK"
                 captions = [caption + trigger_text for caption in captions]
             else:
@@ -648,7 +653,7 @@ def load_image_with_orientation(path, mode = "RGB"):
 
 
 def load_and_save_masks_and_captions(
-    mode: str,
+    concept_mode: str,
     files: Union[str, List[str]],
     output_dir: str = "tmp_out",
     caption_text: Optional[str] = None,
@@ -722,7 +727,7 @@ def load_and_save_masks_and_captions(
     # captions
     print(f"Generating {len(images)} captions...")
     captions, trigger_text, gpt_concept_name = blip_captioning_dataset(
-        images, captions, mode, text=caption_text, substitution_tokens=substitution_tokens
+        images, captions, concept_mode, text=caption_text, substitution_tokens=substitution_tokens
     )
 
     if gpt_concept_name is not None and ((mask_target_prompts is None) or (mask_target_prompts == "")):
