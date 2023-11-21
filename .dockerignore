@@ -1,34 +1,17 @@
 # Models:
 sdxl-cache/
 
-clipx_dataset
+# Subfolders:
 lora_models*
+example_datasets/
+
 cache
 refiner-cache/
 safety-cache/
-trained-model/
-*.png
 
-checkpoint/
-training_out/
-dreambooth/
-lora/
-ttemp/
-.git/
-cog_class_data/
-dataset/
-training_data/
-temp/
-temp_in/
-cog_instance_data/
-example_datasets/
+# Misc files:
 trained_model.tar
-zeke_data.tar
-data.tar
-zeke.zip
-sketch-mountains-input.jpeg
-training_out*
-weights
-inference_*
-trained-model
+.git
+*.out
+*.png
 *.zip
