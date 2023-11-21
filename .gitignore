@@ -1,4 +1,5 @@
 lora_models*
+models
 .env
 refiner-cache
 sdxl-cache

@@ -4,10 +4,11 @@ from typing import Dict, List, Optional, Tuple
 import random
 import numpy as np
 import pandas as pd
+import gc
 import PIL
 import torch
 import torch.utils.checkpoint
-from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
+from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel, StableDiffusionPipeline
 from PIL import Image
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -210,43 +211,58 @@ def import_model_class_from_model_name_or_path(
 
 
 def load_models(pretrained_model_name_or_path, revision, device, weight_dtype):
-    tokenizer_one = AutoTokenizer.from_pretrained(
-        pretrained_model_name_or_path,
-        subfolder="tokenizer",
-        revision=revision,
-        use_fast=False,
-    )
-    tokenizer_two = AutoTokenizer.from_pretrained(
-        pretrained_model_name_or_path,
-        subfolder="tokenizer_2",
-        revision=revision,
-        use_fast=False,
-    )
 
-    # Load scheduler and models
-    noise_scheduler = DDPMScheduler.from_pretrained(
-        pretrained_model_name_or_path, subfolder="scheduler"
-    )
-    # import correct text encoder classes
-    text_encoder_cls_one = import_model_class_from_model_name_or_path(
-        pretrained_model_name_or_path, revision
-    )
-    text_encoder_cls_two = import_model_class_from_model_name_or_path(
-        pretrained_model_name_or_path, revision, subfolder="text_encoder_2"
-    )
-    text_encoder_one = text_encoder_cls_one.from_pretrained(
-        pretrained_model_name_or_path, subfolder="text_encoder", revision=revision
-    )
-    text_encoder_two = text_encoder_cls_two.from_pretrained(
-        pretrained_model_name_or_path, subfolder="text_encoder_2", revision=revision
-    )
+    if 0:
+        tokenizer_one = AutoTokenizer.from_pretrained(
+            pretrained_model_name_or_path,
+            subfolder="tokenizer",
+            revision=revision,
+            use_fast=False,
+        )
+        tokenizer_two = AutoTokenizer.from_pretrained(
+            pretrained_model_name_or_path,
+            subfolder="tokenizer_2",
+            revision=revision,
+            use_fast=False,
+        )
 
-    vae = AutoencoderKL.from_pretrained(
-        pretrained_model_name_or_path, subfolder="vae", revision=revision
-    )
-    unet = UNet2DConditionModel.from_pretrained(
-        pretrained_model_name_or_path, subfolder="unet", revision=revision
-    )
+        # Load scheduler and models
+        noise_scheduler = DDPMScheduler.from_pretrained(
+            pretrained_model_name_or_path, subfolder="scheduler"
+        )
+        # import correct text encoder classes
+        text_encoder_cls_one = import_model_class_from_model_name_or_path(
+            pretrained_model_name_or_path, revision
+        )
+        text_encoder_cls_two = import_model_class_from_model_name_or_path(
+            pretrained_model_name_or_path, revision, subfolder="text_encoder_2"
+        )
+        text_encoder_one = text_encoder_cls_one.from_pretrained(
+            pretrained_model_name_or_path, subfolder="text_encoder", revision=revision
+        )
+        text_encoder_two = text_encoder_cls_two.from_pretrained(
+            pretrained_model_name_or_path, subfolder="text_encoder_2", revision=revision
+        )
+        vae = AutoencoderKL.from_pretrained(
+            pretrained_model_name_or_path, subfolder="vae", revision=revision
+        )
+        unet = UNet2DConditionModel.from_pretrained(
+            pretrained_model_name_or_path, subfolder="unet", revision=revision
+        )
+
+    print(f"Loading inference pipeline from {pretrained_model_name_or_path}...")
+    juggernaut_pipe = StableDiffusionPipeline.from_single_file(
+                pretrained_model_name_or_path,
+                torch_dtype=torch.float16, use_safetensors=True)
+
+    # Copy over the weights from juggernaut:
+    noise_scheduler = juggernaut_pipe.scheduler
+    vae = juggernaut_pipe.vae
+    tokenizer_one = juggernaut_pipe.tokenizer
+    tokenizer_two = juggernaut_pipe.tokenizer_2
+    text_encoder_one = juggernaut_pipe.text_encoder
+    text_encoder_two = juggernaut_pipe.text_encoder_2
+    unet = juggernaut_pipe.unet
 
     vae.requires_grad_(False)
     text_encoder_one.requires_grad_(False)
@@ -257,7 +273,10 @@ def load_models(pretrained_model_name_or_path, revision, device, weight_dtype):
     text_encoder_one.to(device, dtype=weight_dtype)
     text_encoder_two.to(device, dtype=weight_dtype)
 
-    print(text_encoder_one)
+    # release the gpu memory from the juggernaut model:
+    del juggernaut_pipe
+    gc.collect()
+    torch.cuda.empty_cache()
 
     return (
         tokenizer_one,

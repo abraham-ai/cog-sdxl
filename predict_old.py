@@ -41,11 +41,11 @@ REFINER_URL = (
 )
 SAFETY_URL = "https://weights.replicate.delivery/default/sdxl/safety-1.0.tar"
 
+SDXL_MODEL_CACHE = "./models/juggernaut_v6.safetensors"
 
 class KarrasDPM:
     def from_config(config):
         return DPMSolverMultistepScheduler.from_config(config, use_karras_sigmas=True)
-
 
 SCHEDULERS = {
     "DDIM": DDIMScheduler,

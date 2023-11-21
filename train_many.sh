@@ -3,7 +3,7 @@ cog predict \
     -i run_name="steel" \
     -i checkpointing_steps="500" \
     -i debug="True" \
-    -i lora_rank="6" \
+    -i lora_rank="4" \
     -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/steel.zip" \
     -i max_train_steps="1000" \
     -i concept_mode="face" \

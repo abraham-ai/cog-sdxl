@@ -407,8 +407,6 @@ def blip_captioning_dataset(
         # use chatgpt to auto-find a good trigger text and insert it naturally into the prompts:
         retry_count = 0
         while retry_count < 3:
-            captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode)
-                
             try:
                 captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode)
                 n_toks = 0
@@ -418,7 +416,6 @@ def blip_captioning_dataset(
                     
                 if n_toks > int(0.8*len(captions)):
                     break
-                
             except Exception as e:
                 retry_count += 1
                 print(f"An error occurred after try {retry_count}: {e}")
@@ -432,8 +429,8 @@ def blip_captioning_dataset(
             print("Concept mode: ", concept_mode)
             if concept_mode == "style":
                 if 1:
-                    trigger_text = ", in the style of TOK"
-                    captions = [caption + trigger_text for caption in captions]
+                    trigger_text = "image in the style of TOK, "
+                    captions = [trigger_text + caption for caption in captions]
                 else:
                     trigger_text = ""
 

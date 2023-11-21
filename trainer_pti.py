@@ -136,16 +136,16 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.8, n_imgs
                         'fruit hanging from a tree, highly detailed texture, soil, rain, drops, photo realistic, surrealism, highly detailed, 8k macrophotography',
                         'the Taj Mahal, stunning wallpaper',
                         'A luminescent glass butterfly, wings shimmering elegantly, depicts deftly the fragility yet adamantine spirit of nature. It encapsulates Atari honkaku technique, glowing embers inside capturing the sun as it gracefully clenches lifes sweet unpredictability',
-                        'Glass Roots: A luminescent glass sculpture of a fully bloomed rose emerges from a broken marble pedestal, salvaging natures resilience triumphant amidst the decay. Shadows cast by a dim overhead spotlight feign persecution. Delicate veins intertwine the transparent petals, illuminating from within, symbolizing fragilitys steely core. Plummeted leaves curl betrayal. Incomplete roots cling fiercely',
-                        'Title: Eternal Arbor Description: A colossal, life-size tapestry hangs majestically in a dimly lit chamber. Its profound serenity contrasts the grand spectacle it unfolds. Hundreds of intricately woven stitches meticulously portray a towering, ancient oak tree, its knotted branches embracing the heavens. Delicate tendrils of ivy gracefully encircle the trunk, depicting the cycle of growth.',
-                        'In the heart of an ancient forest, a massive projection illuminates the darkness. A lone figure, a majestic mythical creature made of shimmering gold, materializes, casting a radiant glow amidst the towering trees. With meticulous detail, the projection reveals the creatures interconnected patterns - intricate geometric surfaces encasing an expanse of flora and fauna, blurring boundaries between imagination',
+                        'Glass Roots: A luminescent glass sculpture of a fully bloomed rose emerges from a broken marble pedestal, natures resilience triumphant amidst the decay. Shadows cast by a dim overhead spotlight. Delicate veins intertwine the transparent petals, illuminating from within, symbolizing fragilitys steely core.',
+                        'Eternal Arbor Description: A colossal, life-size tapestry hangs majestically in a dimly lit chamber. Its profound serenity contrasts the grand spectacle it unfolds. Hundreds of intricately woven stitches meticulously portray a towering, ancient oak tree, its knotted branches embracing the heavens. ',
+                        'In the heart of an ancient forest, a massive projection illuminates the darkness. A lone figure, a majestic mythical creature made of shimmering gold, materializes, casting a radiant glow amidst the towering trees. intricate geometric surfaces encasing an expanse of flora and fauna,',
                         'The Silent Of Silicon, a digital deer rendered in hyper-realistic 3D, eyes glowing in binary code, comfortably resting amidst rich motherboard-green foliage, accented under crisply fluorescent, simulated LED dawn.',
                         'owl made up of geometric shapes, contours of glowing plasma, black background, dramatic, full picture, ultra high res, octane',
                         'A twisting creature of reflective dragonglass swirling above a scorched field amidst a large clearing in a dark forest',
                         'what do i say to make me exist, oriental mythical beasts, in the golden danish age, in the history of television in the style of light violet and light red, serge najjar, playful and whimsical, associated press photo, afrofuturism-inspired, alasdair mclellan, electronic media',
-                        'A towering, rusted iron monolith emerges from a desolate cityscape, piercing the horizon with audacious defiance. Amidst contrasting patches of verdant, natures forgotten touch yearns for connection, provoking intense introspection and tumultuous emotions. Seeping cracks highlight the cold brutality of isolation, while vibrant splatters of chaotic paint epitom',
-                        'A humanoid figure with a luminous, translucent body floats in a vast, ethereal digital landscape. Strands of brilliant, iridescent code rain down, intertwining with the figure as it reaches out to touch them. The figures face is a blend of human features and intricate circuitry, hinting at the merging of organic and digital existence',
-                        'In the heart of a dense digital forest, a majestic, crystalline unicorn rises. Its translucent, pixelated mane seamlessly transitions into the vibrant greens and golds of the surrounding floating circuit board leaves. Soft moonlight filters through the gaps, creating a breathtaking, surreal ambience that blurs the line between the natural and the digital. The rendering technique employs',
+                        'A towering, rusted iron monolith emerges from a desolate cityscape, piercing the horizon with audacious defiance. Amidst contrasting patches of verdant, natures forgotten touch yearns for connection, provoking intense introspection and tumultuous emotions. vibrant splatters of chaotic paint epitom',
+                        'A humanoid figure with a luminous, translucent body floats in a vast, ethereal digital landscape. Strands of brilliant, iridescent code rain down, intertwining with the figure. a blend of human features and intricate circuitry, hinting at the merging of organic and digital existence',
+                        'In the heart of a dense digital forest, a majestic, crystalline unicorn rises. Its translucent, pixelated mane seamlessly transitions into the vibrant greens and golds of the surrounding floating circuit board leaves. Soft moonlight filters through the gaps, creating a breathtaking',
                         'Silver mushroom with gem spots emerging from water',
                         'Binary Love: A heart-shaped composition made up of glowing binary code, symbolizing the merging of human emotion and technology, incredible digital art, cyberpunk, neon colors, glitch effects, 3D octane render, HD',
                         'A labyrinthine maze representing the search for answers and understanding, Abstract expressionism, muted color palette, heavy brushstrokes, textured surfaces, somber atmosphere, symbolic elements',
@@ -170,9 +170,14 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.8, n_imgs
 
     torch.cuda.empty_cache()
 
-    pipeline = StableDiffusionXLPipeline.from_pretrained(
-        SDXL_MODEL_CACHE, torch_dtype=torch.float16
-    )
+    print(f"Loading inference pipeline from {SDXL_MODEL_CACHE}...")
+    if SDXL_MODEL_CACHE.endswith(".safetensors"):
+        pipeline = StableDiffusionXLPipeline.from_single_file(
+            SDXL_MODEL_CACHE, torch_dtype=torch.float16, use_safetensors=True)
+    else:
+        pipeline = StableDiffusionXLPipeline.from_pretrained(
+            SDXL_MODEL_CACHE, torch_dtype=torch.float16)
+
     pipeline = pipeline.to(device)
     pipeline = patch_pipe_with_lora(pipeline, lora_path)
 
@@ -581,6 +586,15 @@ def main(
         plt.savefig(save_path)
         plt.close()
 
+    def plot_loss(losses, save_path='losses.png'):
+        plt.figure()
+        plt.plot(losses)
+        plt.yscale('log')  # Set y-axis to log scale
+        plt.xlabel('Step')
+        plt.ylabel('Training Loss')
+        plt.savefig(save_path)
+        plt.close()
+
     ti_lrs, lora_lrs = [], []
     #plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path=os.path.join(checkpoint_dir, 'learning_rates.png'))
 
@@ -636,6 +650,7 @@ def main(
                 optimizer.param_groups[1]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
 
         unet.train()
+        losses = []
 
         for step, batch in enumerate(train_dataloader):
             progress_bar.update(1)
@@ -714,7 +729,7 @@ def main(
                 l1_norm = sum(p.abs().sum() for p in unet_lora_parameters) / total_n_lora_params
                 loss = loss + sparsity_lambda * l1_norm
 
-            print(f"{loss.item():.4f}")
+            losses.append(loss.item())
             loss.backward()
 
             if optimizer is not None:
@@ -741,6 +756,7 @@ def main(
                 output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
                 last_save_step = global_step
+                plot_loss(losses)
 
 
     # final_save
