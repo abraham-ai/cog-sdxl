@@ -169,6 +169,8 @@ class Predictor(BasePredictor):
 
         if concept_mode == "face":
             mask_target_prompts = "face"
+        if concept_mode == "concept": # gracefully catch any old versions of concept_mode
+            concept_mode = "object"
 
         print(f"cog:predict:train_lora:{concept_mode}")
 

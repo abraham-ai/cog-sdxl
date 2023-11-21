@@ -90,11 +90,15 @@ def prepare_prompt_for_lora(prompt, lora_path, verbose = True):
     with open(os.path.join(lora_path, "training_args.json"), "r") as f:
         training_args = json.load(f)
         trigger_text = training_args["trigger_text"]
+        concept_mode = training_args["concept_mode"]
 
     if "<concept>" in prompt:
         prompt = prompt.replace("<concept>", trigger_text)
     else:
-        prompt = trigger_text + ", " + prompt
+        if concept_mode == "style":
+            prompt = prompt + " " + trigger_text
+        else:
+            prompt = trigger_text + " " + prompt
 
     for k, v in token_map.items():
         if k in prompt:
@@ -118,20 +122,51 @@ def prepare_prompt_for_lora(prompt, lora_path, verbose = True):
 
 @torch.no_grad()
 def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.8, n_imgs = 4, device = "cuda:0"):
-    validation_prompts = [
-            'a statue of <concept>',
-            'a masterful oil painting portraying <concept> with vibrant colors, brushstrokes and textures',
-            'an origami paper sculpture of <concept>',
-            'a vibrant low-poly artwork of <concept>, rendered in SVG, vector graphics',
-            '<concept>, polaroid photograph',
-            'a huge <concept> sand sculpture on a sunny beach, made of sand',
-            '<concept> immortalized as an exquisite marble statue with masterful chiseling, swirling marble patterns and textures',
-            'a colorful and dynamic <concept> mural sprawling across the side of a building in a city pulsing with life',
-    ]
 
     random.seed(seed)
-    validation_prompts = random.sample(validation_prompts, n_imgs)
-    validation_prompts[0] = '<concept>'
+
+    with open(os.path.join(lora_path, "training_args.json"), "r") as f:
+        training_args = json.load(f)
+        concept_mode = training_args["concept_mode"]
+
+    if concept_mode == "style":
+        validation_prompts = [
+                        'a beautiful mountainous landscape, boulders, fresh water stream, setting sun',
+                        'the stunning skyline of New York City',
+                        'fruit hanging from a tree, highly detailed texture, soil, rain, drops, photo realistic, surrealism, highly detailed, 8k macrophotography',
+                        'the Taj Mahal, stunning wallpaper',
+                        'A luminescent glass butterfly, wings shimmering elegantly, depicts deftly the fragility yet adamantine spirit of nature. It encapsulates Atari honkaku technique, glowing embers inside capturing the sun as it gracefully clenches lifes sweet unpredictability',
+                        'Glass Roots: A luminescent glass sculpture of a fully bloomed rose emerges from a broken marble pedestal, salvaging natures resilience triumphant amidst the decay. Shadows cast by a dim overhead spotlight feign persecution. Delicate veins intertwine the transparent petals, illuminating from within, symbolizing fragilitys steely core. Plummeted leaves curl betrayal. Incomplete roots cling fiercely',
+                        'Title: Eternal Arbor Description: A colossal, life-size tapestry hangs majestically in a dimly lit chamber. Its profound serenity contrasts the grand spectacle it unfolds. Hundreds of intricately woven stitches meticulously portray a towering, ancient oak tree, its knotted branches embracing the heavens. Delicate tendrils of ivy gracefully encircle the trunk, depicting the cycle of growth.',
+                        'In the heart of an ancient forest, a massive projection illuminates the darkness. A lone figure, a majestic mythical creature made of shimmering gold, materializes, casting a radiant glow amidst the towering trees. With meticulous detail, the projection reveals the creatures interconnected patterns - intricate geometric surfaces encasing an expanse of flora and fauna, blurring boundaries between imagination',
+                        'The Silent Of Silicon, a digital deer rendered in hyper-realistic 3D, eyes glowing in binary code, comfortably resting amidst rich motherboard-green foliage, accented under crisply fluorescent, simulated LED dawn.',
+                        'owl made up of geometric shapes, contours of glowing plasma, black background, dramatic, full picture, ultra high res, octane',
+                        'A twisting creature of reflective dragonglass swirling above a scorched field amidst a large clearing in a dark forest',
+                        'what do i say to make me exist, oriental mythical beasts, in the golden danish age, in the history of television in the style of light violet and light red, serge najjar, playful and whimsical, associated press photo, afrofuturism-inspired, alasdair mclellan, electronic media',
+                        'A towering, rusted iron monolith emerges from a desolate cityscape, piercing the horizon with audacious defiance. Amidst contrasting patches of verdant, natures forgotten touch yearns for connection, provoking intense introspection and tumultuous emotions. Seeping cracks highlight the cold brutality of isolation, while vibrant splatters of chaotic paint epitom',
+                        'A humanoid figure with a luminous, translucent body floats in a vast, ethereal digital landscape. Strands of brilliant, iridescent code rain down, intertwining with the figure as it reaches out to touch them. The figures face is a blend of human features and intricate circuitry, hinting at the merging of organic and digital existence',
+                        'In the heart of a dense digital forest, a majestic, crystalline unicorn rises. Its translucent, pixelated mane seamlessly transitions into the vibrant greens and golds of the surrounding floating circuit board leaves. Soft moonlight filters through the gaps, creating a breathtaking, surreal ambience that blurs the line between the natural and the digital. The rendering technique employs',
+                        'Silver mushroom with gem spots emerging from water',
+                        'Binary Love: A heart-shaped composition made up of glowing binary code, symbolizing the merging of human emotion and technology, incredible digital art, cyberpunk, neon colors, glitch effects, 3D octane render, HD',
+                        'A labyrinthine maze representing the search for answers and understanding, Abstract expressionism, muted color palette, heavy brushstrokes, textured surfaces, somber atmosphere, symbolic elements',
+                        'A solitary tree standing tall amidst a sea of buildings, Urban nature photography, vibrant colors, juxtaposition of natural elements with urban landscapes, play of light and shadow, storytelling through compositions',
+                ]
+        validation_prompts = random.sample(validation_prompts, n_imgs)
+        validation_prompts[0] = ''
+
+    else:
+        validation_prompts = [
+                'a statue of <concept>',
+                'a masterful oil painting portraying <concept> with vibrant colors, brushstrokes and textures',
+                'an origami paper sculpture of <concept>',
+                'a vibrant low-poly artwork of <concept>, rendered in SVG, vector graphics',
+                '<concept>, polaroid photograph',
+                'a huge <concept> sand sculpture on a sunny beach, made of sand',
+                '<concept> immortalized as an exquisite marble statue with masterful chiseling, swirling marble patterns and textures',
+                'a colorful and dynamic <concept> mural sprawling across the side of a building in a city pulsing with life',
+        ]
+        validation_prompts = random.sample(validation_prompts, n_imgs)
+        validation_prompts[0] = '<concept>'
 
     torch.cuda.empty_cache()
 
@@ -397,11 +432,13 @@ def main(
         print("Instantiating prodigy optimizer!")
         optimizer_prod = prodigyopt.Prodigy(
                         params_to_optimize_prodigy,
+                        d_coef = 0.75,
                         lr=1.0,
                         decouple=True,
                         use_bias_correction=True,
                         safeguard_warmup=True,
-                        weight_decay=0.001
+                        weight_decay=0.005,
+                        betas=(0.9, 0.99)
                     )
         
         optimizer = torch.optim.AdamW(

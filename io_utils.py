@@ -239,6 +239,8 @@ def flatten_dir(root_dir):
         print(f"An error occurred while flattening the directory: {e}")
 
 def clean_and_prep_image(file_path, max_n_pixels = 2048*2048):
+    if file_path.endswith(".txt"):
+        return
     try:
         image = load_image_with_orientation(file_path)
         if image.size[0] * image.size[1] > max_n_pixels:

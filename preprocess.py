@@ -320,7 +320,7 @@ def cleanup_prompts_with_chatgpt(
 
     if concept_mode == 'face':
         gpt_concept_name = "face"
-    elif concept_mode == 'object_injection' or mode == 'object':
+    elif concept_mode == 'object_injection' or concept_mode == 'object':
         # extract the [Concept Name] from the response:
         for line in gpt_completion.split("\n"):
             if line.startswith("Concept Name:"):
@@ -429,10 +429,14 @@ def blip_captioning_dataset(
         # simple concat of trigger text with rest of prompt:
         if len(text) == 0:
             print("WARNING: no captioning text was given and there's too few/many prompts to do chatgpt cleanup...")
-
+            print("Concept mode: ", concept_mode)
             if concept_mode == "style":
-                trigger_text = ", in the style of TOK"
-                captions = [caption + trigger_text for caption in captions]
+                if 1:
+                    trigger_text = ", in the style of TOK"
+                    captions = [caption + trigger_text for caption in captions]
+                else:
+                    trigger_text = ""
+
             else:
                 trigger_text = "a photo of TOK, "
                 captions = [trigger_text + caption for caption in captions]
@@ -725,7 +729,7 @@ def load_and_save_masks_and_captions(
         captions = captions + captions
 
     # captions
-    print(f"Generating {len(images)} captions...")
+    print(f"Generating {len(images)} captions using mode: {concept_mode}...")
     captions, trigger_text, gpt_concept_name = blip_captioning_dataset(
         images, captions, concept_mode, text=caption_text, substitution_tokens=substitution_tokens
     )
