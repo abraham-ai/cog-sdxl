@@ -42,6 +42,7 @@ REFINER_URL = (
 SAFETY_URL = "https://weights.replicate.delivery/default/sdxl/safety-1.0.tar"
 
 SDXL_MODEL_CACHE = "./models/juggernaut_v6.safetensors"
+SDXL_URL = "https://weights.replicate.delivery/default/sdxl/sdxl-vae-fix-1.0.tar"
 
 class KarrasDPM:
     def from_config(config):

@@ -342,7 +342,8 @@ class TokenEmbeddingsHandler:
 
     def initialize_new_tokens(self, 
         inserting_toks: List[str],
-        starting_toks:  Optional[List[str]] = None
+        starting_toks:  Optional[List[str]] = None,
+        seed: int = 0,
         ):
 
         print("Initializing new tokens...")
@@ -385,7 +386,6 @@ class TokenEmbeddingsHandler:
                     isinstance(tok, str) for tok in starting_toks
                 ), "All elements in starting_toks should be strings."
                 assert len(starting_toks) == len(self.inserting_toks), "starting_toks should have the same length as inserting_toks"
-
                 self.starting_ids = tokenizer.convert_tokens_to_ids(starting_toks)
 
                 print(f"Copying embeddings from starting tokens {starting_toks} to new tokens {self.inserting_toks}")
@@ -399,7 +399,7 @@ class TokenEmbeddingsHandler:
 
                 print(f"Text encoder {idx} token_embedding_std:  {std_token_embedding}")
                 print(f"Text encoder {idx} token_embedding_mean: {std_token_mean}")
-
+                torch.manual_seed(seed)
                 text_encoder.text_model.embeddings.token_embedding.weight.data[
                     self.train_ids
                 ] = (

@@ -152,6 +152,28 @@ def patch_pipe_with_lora(pipe, lora_path):
     handler.load_embeddings(os.path.join(lora_path, "embeddings.pti"))
     return pipe
 
+def get_avg_lr(optimizer):
+    # Calculate the weighted average effective learning rate
+    total_lr = 0
+    total_params = 0
+    for group in optimizer.param_groups:
+        d = group['d']
+        lr = group['lr']
+        bias_correction = 1  # Default value
+        if group['use_bias_correction']:
+            beta1, beta2 = group['betas']
+            k = group['k']
+            bias_correction = ((1 - beta2**(k+1))**0.5) / (1 - beta1**(k+1))
+
+        effective_lr = d * lr * bias_correction
+
+        # Count the number of parameters in this group
+        num_params = sum(p.numel() for p in group['params'] if p.requires_grad)
+        total_lr += effective_lr * num_params
+        total_params += num_params
+
+    average_lr = total_lr / total_params
+    return average_lr
 
 
 # Helper function for multiple replacements
@@ -446,9 +468,9 @@ def main(
         [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two]
     )
     
-    #starting_toks = ["monster", "toy"]
+    #starting_toks = ["man", "face"]
     starting_toks = None
-    embedding_handler.initialize_new_tokens(inserting_toks=inserting_list_tokens, starting_toks=starting_toks)
+    embedding_handler.initialize_new_tokens(inserting_toks=inserting_list_tokens, starting_toks=starting_toks, seed=seed)
 
     text_encoders = [text_encoder_one, text_encoder_two]
 
@@ -571,14 +593,14 @@ def main(
         # Note: the specific settings of Prodigy seem to matter A LOT
         optimizer_prod = prodigyopt.Prodigy(
                         params_to_optimize_prodigy,
-                        d_coef = 0.33,
+                        d_coef = 0.25,
                         lr=1.0,
                         decouple=True,
                         use_bias_correction=True,
                         safeguard_warmup=True,
                         weight_decay=0.005,
                         betas=(0.9, 0.99),
-                        growth_rate=1.02,
+                        growth_rate=1.015,  # this slows down the lr_rampup
                     )
         
         optimizer = torch.optim.AdamW(
@@ -654,8 +676,7 @@ def main(
     # Experimental: warmup the token embeddings using CLIP-similarity:
     #embedding_handler.pre_optimize_token_embeddings(train_dataset)
 
-    lr_ramp_power = 2.0
-
+    lr_ramp_power = 3.0
     ti_lrs, lora_lrs = [], []
     #plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path=os.path.join(checkpoint_dir, 'learning_rates.png'))
 
@@ -767,14 +788,7 @@ def main(
                 l1_norm = sum(p.abs().sum() for p in unet_lora_parameters) / total_n_lora_params
                 loss = loss + sparsity_lambda * l1_norm
 
-            #print(f"Train loss: {loss.item():.3f}, current Prodigy lr: {optimizer_prod.param_groups[0]['lr']:.6f}")
-
-            if not hard_pivot:
-                try:
-                    print(f"ti_lr: {optimizer.param_groups[0]['lr']:.5f}")
-                except:
-                    pass
-            
+            #print(f"Train loss: {loss.item():.3f}, current Prodigy lr: {optimizer_prod.param_groups[0]['lr']:.6f}")            
             losses.append(loss.item())
             loss.backward()
 
@@ -790,11 +804,11 @@ def main(
 
             # Track the learning rates for final plotting:
             try:
-                ti_lrs.append(optimizer.param_groups[1]['lr'])
+                ti_lrs.append(optimizer.param_groups[0]['lr'])
             except:
                 ti_lrs.append(0.0)
 
-            lora_lrs.append(optimizer_prod.param_groups[0]['lr'])
+            lora_lrs.append(get_avg_lr(optimizer_prod))
 
             # Print some statistics:
             if (global_step % checkpointing_steps == 0) and (global_step > 0):
