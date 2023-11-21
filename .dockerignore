@@ -1,7 +1,9 @@
+# Models:
+sdxl-cache/
+
 clipx_dataset
 lora_models*
 cache
-sdxl-cache/
 refiner-cache/
 safety-cache/
 trained-model/
