@@ -212,7 +212,8 @@ def import_model_class_from_model_name_or_path(
 
 def load_models(pretrained_model_name_or_path, revision, device, weight_dtype):
 
-    if 0:
+    if "juggernaut" not in pretrained_model_name_or_path:
+        print("Loading base SDXL...")
         tokenizer_one = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path,
             subfolder="tokenizer",
@@ -250,19 +251,44 @@ def load_models(pretrained_model_name_or_path, revision, device, weight_dtype):
             pretrained_model_name_or_path, subfolder="unet", revision=revision
         )
 
-    print(f"Loading inference pipeline from {pretrained_model_name_or_path}...")
-    juggernaut_pipe = StableDiffusionPipeline.from_single_file(
-                pretrained_model_name_or_path,
-                torch_dtype=torch.float16, use_safetensors=True)
+    if "juggernaut" in pretrained_model_name_or_path:
+        print(f"Loading model weights from {pretrained_model_name_or_path}...")
+        pipe = StableDiffusionPipeline.from_single_file(
+                    pretrained_model_name_or_path, torch_dtype=torch.float16, use_safetensors=True)
 
-    # Copy over the weights from juggernaut:
-    noise_scheduler = juggernaut_pipe.scheduler
-    vae = juggernaut_pipe.vae
-    tokenizer_one = juggernaut_pipe.tokenizer
-    tokenizer_two = juggernaut_pipe.tokenizer_2
-    text_encoder_one = juggernaut_pipe.text_encoder
-    text_encoder_two = juggernaut_pipe.text_encoder_2
-    unet = juggernaut_pipe.unet
+        # Use fixed scheduler for training:
+        noise_scheduler = DDPMScheduler(
+            beta_end = 0.012,
+            beta_schedule = "scaled_linear",
+            beta_start = 0.00085,
+            clip_sample = False,
+            clip_sample_range = 1.0,
+            dynamic_thresholding_ratio = 0.995,
+            #"interpolation_type": "linear",
+            num_train_timesteps = 1000,
+            prediction_type = "epsilon",
+            sample_max_value = 1.0,
+            #set_alpha_to_one = False,
+            #"skip_prk_steps": true,
+            steps_offset = 1,
+            thresholding = False,
+            timestep_spacing = "leading",
+            #"trained_betas": null,
+            #"use_karras_sigmas": false,
+            variance_type = "fixed_small"
+            )
+
+        print(noise_scheduler)
+        
+        # Extract the submodules from the model:
+        vae = pipe.vae
+        tokenizer_one = pipe.tokenizer
+        tokenizer_two = pipe.tokenizer_2
+        text_encoder_one = pipe.text_encoder
+        text_encoder_two = pipe.text_encoder_2
+        unet = pipe.unet
+
+        del pipe
 
     vae.requires_grad_(False)
     text_encoder_one.requires_grad_(False)
@@ -273,8 +299,6 @@ def load_models(pretrained_model_name_or_path, revision, device, weight_dtype):
     text_encoder_one.to(device, dtype=weight_dtype)
     text_encoder_two.to(device, dtype=weight_dtype)
 
-    # release the gpu memory from the juggernaut model:
-    del juggernaut_pipe
     gc.collect()
     torch.cuda.empty_cache()
 

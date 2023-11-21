@@ -6,6 +6,7 @@ import os
 import sys
 import random
 import shutil
+import gc
 import numpy as np
 from typing import List, Optional
 
@@ -24,19 +25,93 @@ from dataset_and_utils import (
 )
 
 from io_utils import make_validation_img_grid, download_and_prep_training_data
-
 from predict_old import SDXL_MODEL_CACHE
 from diffusers import StableDiffusionXLPipeline
 from safetensors.torch import load_file
+
+import matplotlib.pyplot as plt
+
+def plot_torch_hist(parameters, epoch, checkpoint_dir, name, bins=100, min_val=-1, max_val=1, ymax_f = 0.75):
+
+    # Initialize histogram
+    hist_values = torch.zeros(bins).cuda()
+
+    n_values = 0
+
+    # Update histogram batch-wise to save memory
+    for p in parameters:
+        try:
+            hist_values += torch.histc(p.data, bins=bins, min=min_val, max=max_val)
+        except:
+            hist_values += torch.histc(p.float(), bins=bins, min=min_val, max=max_val)
+        n_values += p.numel()
+
+    # Convert to NumPy and plot
+    hist_values_cpu = hist_values.cpu().numpy()
+    plt.figure()
+    plt.hist([min_val + (max_val - min_val) * (i + 0.5) / bins for i in range(bins)], bins, weights=hist_values_cpu)
+    plt.ylim(0, ymax_f * n_values)
+    plt.xlabel('Weight Value')
+    plt.ylabel('Count')
+    plt.title(f'Epoch {epoch} {name} Histogram')
+    plt.savefig(f"{checkpoint_dir}/{name}_histogram_{epoch:04d}.png")
+    plt.close()
+
+
+def plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path='learning_rates.png'):
+    epochs = range(first_epoch, num_train_epochs)
+    lora_lrs = []
+    ti_lrs = []
+    
+    for epoch in epochs:
+        completion_f = epoch / num_train_epochs
+        # param_groups[0] goes from 0.0 to lora_lr over the course of training
+        lora_lrs.append(lora_lr * completion_f ** lr_ramp_power)
+        # param_groups[1] goes from ti_lr to 0.0 over the course of training
+        ti_lrs.append(ti_lr * (1 - completion_f) ** lr_ramp_power)
+        
+    plt.figure()
+    plt.plot(epochs, lora_lrs, label='LoRA LR')
+    plt.plot(epochs, ti_lrs, label='TI LR')
+    plt.xlabel('Epoch')
+    plt.ylabel('Learning Rate')
+    plt.title('Learning Rate Curves')
+    plt.legend()
+    plt.savefig(save_path)
+    plt.close()
+
+# plot the learning rates:
+def plot_lrs(lora_lrs, ti_lrs, save_path='learning_rates.png'):
+    plt.figure()
+    plt.plot(range(len(lora_lrs)), lora_lrs, label='LoRA LR')
+    plt.plot(range(len(lora_lrs)), ti_lrs, label='TI LR')
+    plt.yscale('log')  # Set y-axis to log scale
+    plt.ylim(1e-6, 3e-3)
+    plt.xlabel('Step')
+    plt.ylabel('Learning Rate')
+    plt.title('Learning Rate Curves')
+    plt.legend()
+    plt.savefig(save_path)
+    plt.close()
+
+def plot_loss(losses, save_path='losses.png'):
+    plt.figure()
+    plt.plot(losses)
+    plt.yscale('log')  # Set y-axis to log scale
+    plt.xlabel('Step')
+    plt.ylabel('Training Loss')
+    plt.savefig(save_path)
+    plt.close()
+
+    
 
 def patch_pipe_with_lora(pipe, lora_path):
 
     with open(os.path.join(lora_path, "training_args.json"), "r") as f:
         training_args = json.load(f)
-        lora_rank      = training_args["lora_rank"]
+        lora_rank     = training_args["lora_rank"]
     
     unet = pipe.unet
-
     lora_safetensors_path = os.path.join(lora_path, "lora.safetensors")
 
     if os.path.exists(lora_safetensors_path):
@@ -73,42 +148,96 @@ def patch_pipe_with_lora(pipe, lora_path):
         tensors = load_file(unet_path)
 
     unet.load_state_dict(tensors, strict=False)
-    
     handler = TokenEmbeddingsHandler([pipe.text_encoder, pipe.text_encoder_2], [pipe.tokenizer, pipe.tokenizer_2])
     handler.load_embeddings(os.path.join(lora_path, "embeddings.pti"))
     return pipe
 
-def prepare_prompt_for_lora(prompt, lora_path, verbose = True):
+
+
+# Helper function for multiple replacements
+def replace_in_string(s, replacements):
+    for target, replacement in replacements.items():
+        s = s.replace(target, replacement)
+    return s
+
+def prepare_prompt_for_lora(prompt, lora_path, interpolation=False, verbose=True):
+    if "_no_token" in lora_path:
+        return prompt
+        
     orig_prompt = prompt
 
+    # Helper function to read JSON
+    def read_json_from_path(path):
+        with open(path, "r") as f:
+            return json.load(f)
+
+    # Check existence of "special_params.json"
     if not os.path.exists(os.path.join(lora_path, "special_params.json")):
-        raise "This concept is from an old lora trainer that was deprecated, please retrain your concept for better results!"
+        raise ValueError("This concept is from an old lora trainer that was deprecated. Please retrain your concept for better results!")
 
-    with open(os.path.join(lora_path, "special_params.json"), "r") as f:
-        token_map = json.load(f)
-
-    with open(os.path.join(lora_path, "training_args.json"), "r") as f:
-        training_args = json.load(f)
-        trigger_text = training_args["trigger_text"]
-        concept_mode = training_args["concept_mode"]
-
-    if "<concept>" in prompt:
-        prompt = prompt.replace("<concept>", trigger_text)
-    else:
-        if concept_mode == "style":
-            prompt = prompt + " " + trigger_text
-        else:
-            prompt = trigger_text + " " + prompt
-
-    for k, v in token_map.items():
-        if k in prompt:
-            prompt = prompt.replace(k, v)
+    token_map = read_json_from_path(os.path.join(lora_path, "special_params.json"))
+    training_args = read_json_from_path(os.path.join(lora_path, "training_args.json"))
     
-    # fix some common mistakes:
-    prompt = prompt.replace(",,", ",")
-    prompt = prompt.replace("  ", " ")
-    prompt = prompt.replace(" .", ".")
-    prompt = prompt.replace(" ,", ",")
+    try:
+        lora_name = str(training_args["name"])
+    except: # fallback for old loras that dont have the name field:
+        return training_args["trigger_text"] + ", " + prompt
+
+    print(f"lora name: {lora_name}")
+    lora_name_encapsulated = "<" + lora_name + ">"
+    trigger_text = training_args["trigger_text"]
+
+    try:
+        mode = training_args["concept_mode"]
+    except KeyError:
+        try:
+            mode = training_args["mode"]
+        except KeyError:
+            mode = "object"
+
+    # Handle different modes
+    print(f"lora mode: {mode}")
+    if mode != "style":
+        replacements = {
+            "<concept>": trigger_text,
+            "<concepts>": trigger_text + "'s",
+            lora_name_encapsulated: trigger_text,
+            lora_name_encapsulated.lower(): trigger_text,
+            lora_name: trigger_text,
+            lora_name.lower(): trigger_text,
+        }
+        prompt = replace_in_string(prompt, replacements)
+        if trigger_text not in prompt:
+            prompt = trigger_text + ", " + prompt
+    else:
+        style_replacements = {
+            "in the style of <concept>": "in the style of TOK",
+            f"in the style of {lora_name_encapsulated}": "in the style of TOK",
+            f"in the style of {lora_name_encapsulated.lower()}": "in the style of TOK",
+            f"in the style of {lora_name}": "in the style of TOK",
+            f"in the style of {lora_name.lower()}": "in the style of TOK"
+        }
+        prompt = replace_in_string(prompt, style_replacements)
+        if "in the style of TOK" not in prompt:
+            prompt = "in the style of TOK, " + prompt
+        
+    # Final cleanup
+    prompt = replace_in_string(prompt, {"<concept>": "TOK", lora_name_encapsulated: "TOK"})
+
+    if interpolation and mode != "style":
+        prompt = "TOK, " + prompt
+
+    # Replace tokens based on token map
+    prompt = replace_in_string(prompt, token_map)
+
+    # Fix common mistakes
+    fix_replacements = {
+        ",,": ",",
+        "  ": " ",
+        " .": ".",
+        " ,": ","
+    }
+    prompt = replace_in_string(prompt, fix_replacements)
 
     if verbose:
         print('-------------------------')
@@ -119,6 +248,7 @@ def prepare_prompt_for_lora(prompt, lora_path, verbose = True):
         print('-------------------------')
 
     return prompt
+
 
 @torch.no_grad()
 def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.8, n_imgs = 4, device = "cuda:0"):
@@ -169,7 +299,6 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.8, n_imgs
         validation_prompts[0] = '<concept>'
 
     torch.cuda.empty_cache()
-
     print(f"Loading inference pipeline from {SDXL_MODEL_CACHE}...")
     if SDXL_MODEL_CACHE.endswith(".safetensors"):
         pipeline = StableDiffusionXLPipeline.from_single_file(
@@ -194,17 +323,17 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.8, n_imgs
     else:
         cross_attention_kwargs = None
 
-    with torch.cuda.amp.autocast():
-        for i in range(n_imgs):
-            pipeline_args["prompt"] = validation_prompts[i]
-            print(f"Rendering validation img with prompt: {validation_prompts[i]}")
-            image = pipeline(**pipeline_args, generator=generator, cross_attention_kwargs = cross_attention_kwargs).images[0]
-            image.save(os.path.join(lora_path, f"img_{train_step:04d}_{i}.jpg"), format="JPEG", quality=95)
+    #with torch.cuda.amp.autocast():
+    for i in range(n_imgs):
+        pipeline_args["prompt"] = validation_prompts[i]
+        print(f"Rendering validation img with prompt: {validation_prompts[i]}")
+        image = pipeline(**pipeline_args, generator=generator, cross_attention_kwargs = cross_attention_kwargs).images[0]
+        image.save(os.path.join(lora_path, f"img_{train_step:04d}_{i}.jpg"), format="JPEG", quality=95)
 
     # create img_grid:
     img_grid_path = make_validation_img_grid(lora_path)
-
     del pipeline
+    gc.collect()
     torch.cuda.empty_cache()
 
 def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names, make_images = True):
@@ -360,13 +489,17 @@ def main(
         # Optimizer creation
         params_to_optimize = [
             {
-                "params": unet_param_to_optimize,
-                "lr": unet_learning_rate,
-            },
-            {
                 "params": text_encoder_parameters,
                 "lr": ti_lr,
                 "weight_decay": ti_weight_decay,
+            },
+        ]
+
+        params_to_optimize_prodigy = [
+            {
+                "params": unet_param_to_optimize,
+                "lr": unet_learning_rate,
+                "weight_decay": 0.005,
             },
         ]
 
@@ -417,11 +550,11 @@ def main(
             {
                 "params": unet_lora_parameters,
                 "lr": 1.0,
-                "weight_decay": 0.001,
+                "weight_decay": 0.005,
             },
         ]
     
-    optimizer_type = "prodigy"
+    optimizer_type = "prodigy" # hardcode for now
 
     if optimizer_type != "prodigy":
         optimizer = torch.optim.AdamW(
@@ -435,20 +568,22 @@ def main(
             raise ImportError("To use Prodigy, please install the prodigyopt library: `pip install prodigyopt`")
 
         print("Instantiating prodigy optimizer!")
+        # Note: the specific settings of Prodigy seem to matter A LOT
         optimizer_prod = prodigyopt.Prodigy(
                         params_to_optimize_prodigy,
-                        d_coef = 0.75,
+                        d_coef = 0.33,
                         lr=1.0,
                         decouple=True,
                         use_bias_correction=True,
                         safeguard_warmup=True,
                         weight_decay=0.005,
-                        betas=(0.9, 0.99)
+                        betas=(0.9, 0.99),
+                        growth_rate=1.02,
                     )
         
         optimizer = torch.optim.AdamW(
             params_to_optimize,
-            weight_decay=0.0, # this wd doesn't matter, I think
+            weight_decay=0.001, # this wd doesn't matter, I think
         )
 
     print(f"# PTI : Loading dataset, do_cache {do_cache}")
@@ -519,81 +654,7 @@ def main(
     # Experimental: warmup the token embeddings using CLIP-similarity:
     #embedding_handler.pre_optimize_token_embeddings(train_dataset)
 
-    lr_ramp_power = 1.0
-
-    import matplotlib.pyplot as plt
-
-    def plot_torch_hist(parameters, epoch, checkpoint_dir, name, bins=100, min_val=-1, max_val=1, ymax_f = 0.75):
-
-        # Initialize histogram
-        hist_values = torch.zeros(bins).cuda()
-
-        n_values = 0
-
-        # Update histogram batch-wise to save memory
-        for p in parameters:
-            try:
-                hist_values += torch.histc(p.data, bins=bins, min=min_val, max=max_val)
-            except:
-                hist_values += torch.histc(p.float(), bins=bins, min=min_val, max=max_val)
-            n_values += p.numel()
-
-        # Convert to NumPy and plot
-        hist_values_cpu = hist_values.cpu().numpy()
-        plt.figure()
-        plt.hist([min_val + (max_val - min_val) * (i + 0.5) / bins for i in range(bins)], bins, weights=hist_values_cpu)
-        plt.ylim(0, ymax_f * n_values)
-        plt.xlabel('Weight Value')
-        plt.ylabel('Count')
-        plt.title(f'Epoch {epoch} {name} Histogram')
-        plt.savefig(f"{checkpoint_dir}/{name}_histogram_{epoch:04d}.png")
-        plt.close()
-
-
-    def plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path='learning_rates.png'):
-        epochs = range(first_epoch, num_train_epochs)
-        lora_lrs = []
-        ti_lrs = []
-        
-        for epoch in epochs:
-            completion_f = epoch / num_train_epochs
-            # param_groups[0] goes from 0.0 to lora_lr over the course of training
-            lora_lrs.append(lora_lr * completion_f ** lr_ramp_power)
-            # param_groups[1] goes from ti_lr to 0.0 over the course of training
-            ti_lrs.append(ti_lr * (1 - completion_f) ** lr_ramp_power)
-            
-        plt.figure()
-        plt.plot(epochs, lora_lrs, label='LoRA LR')
-        plt.plot(epochs, ti_lrs, label='TI LR')
-        plt.xlabel('Epoch')
-        plt.ylabel('Learning Rate')
-        plt.title('Learning Rate Curves')
-        plt.legend()
-        plt.savefig(save_path)
-        plt.close()
-
-    # plot the learning rates:
-    def plot_lrs(lora_lrs, ti_lrs, save_path='learning_rates.png'):
-        plt.figure()
-        plt.plot(range(len(lora_lrs)), lora_lrs, label='LoRA LR')
-        plt.plot(range(len(lora_lrs)), ti_lrs, label='TI LR')
-        plt.yscale('log')  # Set y-axis to log scale
-        plt.ylim(1e-6, 3e-3)
-        plt.xlabel('Step')
-        plt.ylabel('Learning Rate')
-        plt.title('Learning Rate Curves')
-        plt.legend()
-        plt.savefig(save_path)
-        plt.close()
-
-    def plot_loss(losses, save_path='losses.png'):
-        plt.figure()
-        plt.plot(losses)
-        plt.yscale('log')  # Set y-axis to log scale
-        plt.xlabel('Step')
-        plt.ylabel('Training Loss')
-        plt.savefig(save_path)
-        plt.close()
+    lr_ramp_power = 2.0
 
     ti_lrs, lora_lrs = [], []
     #plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path=os.path.join(checkpoint_dir, 'learning_rates.png'))
@@ -603,54 +664,31 @@ def main(
 
     #output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
     #save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
+    losses = []
 
     for epoch in range(first_epoch, num_train_epochs):
         
-        if is_lora:
-            if hard_pivot:
-                if epoch == num_train_epochs // 2:
-                    print("----------------------")
-                    print("# PTI :  Pivot halfway")
-                    print("----------------------")
-                    # remove text encoder parameters from the optimizer
-                    optimizer.param_groups = params_to_optimize[:1]
+        if hard_pivot:
+            if epoch == num_train_epochs // 2:
+                print("----------------------")
+                print("# PTI :  Pivot halfway")
+                print("----------------------")
+                # remove text encoder parameters from the optimizer
+                optimizer.param_groups = None
 
-                    # remove the optimizer state corresponding to text_encoder_parameters
-                    for param in text_encoder_parameters:
-                        if param in optimizer.state:
-                            del optimizer.state[param]
+                # remove the optimizer state corresponding to text_encoder_parameters
+                for param in text_encoder_parameters:
+                    if param in optimizer.state:
+                        del optimizer.state[param]
 
-                    optimizer = None
+                optimizer = None
 
-            else: # Update learning rates for embeddings and lora:
-                completion_f = epoch / num_train_epochs
-                # param_groups[0] goes from 0.0 to lora_lr over the course of training
-                optimizer.param_groups[0]['lr'] = lora_lr * completion_f ** lr_ramp_power
-                # param_groups[1] goes from ti_lr to 0.0 over the course of training
-                optimizer.param_groups[1]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
-        else: # full finetuning
-            if hard_pivot:
-                if epoch == num_train_epochs // 2:
-                    print("# PTI :  Pivot halfway")
-                    # remove text encoder parameters from the optimizer
-                    optimizer.param_groups = params_to_optimize[:1]
-
-                    # remove the optimizer state corresponding to text_encoder_parameters
-                    for param in text_encoder_parameters:
-                        if param in optimizer.state:
-                            del optimizer.state[param]
-
-                    optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['lr'] * 3
-
-            else: # Update learning rates for unet:
-                completion_f = epoch / num_train_epochs
-                # param_groups[0] goes from 0.0 to lora_lr over the course of training
-                optimizer.param_groups[0]['lr'] = unet_learning_rate * completion_f ** lr_ramp_power
-                # param_groups[1] goes from ti_lr to 0.0 over the course of training
-                optimizer.param_groups[1]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
+        else: # Update learning rates gradually:
+            completion_f = epoch / num_train_epochs
+            # param_groups[1] goes from ti_lr to 0.0 over the course of training
+            optimizer.param_groups[0]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
 
         unet.train()
-        losses = []
 
         for step, batch in enumerate(train_dataloader):
             progress_bar.update(1)
@@ -729,6 +767,14 @@ def main(
                 l1_norm = sum(p.abs().sum() for p in unet_lora_parameters) / total_n_lora_params
                 loss = loss + sparsity_lambda * l1_norm
 
+            #print(f"Train loss: {loss.item():.3f}, current Prodigy lr: {optimizer_prod.param_groups[0]['lr']:.6f}")
+
+            if not hard_pivot:
+                try:
+                    print(f"ti_lr: {optimizer.param_groups[0]['lr']:.5f}")
+                except:
+                    pass
+            
             losses.append(loss.item())
             loss.backward()
 
@@ -752,11 +798,11 @@ def main(
 
             # Print some statistics:
             if (global_step % checkpointing_steps == 0) and (global_step > 0):
+                plot_loss(losses, save_path=f'{output_dir}/losses.png')
                 plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
                 output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
                 last_save_step = global_step
-                plot_loss(losses)
 
 
     # final_save
@@ -769,7 +815,6 @@ def main(
         save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
     else:
         print(f"Skipping final save, {output_save_dir} already exists")
-
 
     return output_save_dir
 

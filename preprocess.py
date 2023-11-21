@@ -429,7 +429,7 @@ def blip_captioning_dataset(
             print("Concept mode: ", concept_mode)
             if concept_mode == "style":
                 if 1:
-                    trigger_text = "image in the style of TOK, "
+                    trigger_text = "in the style of TOK, "
                     captions = [trigger_text + caption for caption in captions]
                 else:
                     trigger_text = ""
