@@ -688,30 +688,30 @@ def main(
     losses = []
 
     for epoch in range(first_epoch, num_train_epochs):
-        
-        if hard_pivot:
-            if epoch == num_train_epochs // 2:
-                print("----------------------")
-                print("# PTI :  Pivot halfway")
-                print("----------------------")
-                # remove text encoder parameters from the optimizer
-                optimizer.param_groups = None
-
-                # remove the optimizer state corresponding to text_encoder_parameters
-                for param in text_encoder_parameters:
-                    if param in optimizer.state:
-                        del optimizer.state[param]
-
-                optimizer = None
-
-        else: # Update learning rates gradually:
-            completion_f = epoch / num_train_epochs
-            # param_groups[1] goes from ti_lr to 0.0 over the course of training
-            optimizer.param_groups[0]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
-
         unet.train()
 
         for step, batch in enumerate(train_dataloader):
+
+            if hard_pivot:
+                if epoch >= num_train_epochs // 2:
+                    if optimizer is not None:
+                        print("----------------------")
+                        print("# PTI :  Pivot halfway")
+                        print("----------------------")
+                        # remove text encoder parameters from the optimizer
+                        optimizer.param_groups = None
+                        # remove the optimizer state corresponding to text_encoder_parameters
+                        for param in text_encoder_parameters:
+                            if param in optimizer.state:
+                                del optimizer.state[param]
+                        optimizer = None
+
+            else: # Update learning rates gradually:
+                completion_f = epoch / num_train_epochs
+                # param_groups[1] goes from ti_lr to 0.0 over the course of training
+                optimizer.param_groups[0]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
+
+
             progress_bar.update(1)
             progress_bar.set_description(f"# PTI :step: {global_step}, epoch: {epoch}")
             progress_bar.refresh()
