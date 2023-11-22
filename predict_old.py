@@ -58,14 +58,24 @@ SCHEDULERS = {
     "PNDM": PNDMScheduler,
 }
 
-
 def download_weights(url, dest):
     start = time.time()
     print("downloading url: ", url)
     print("downloading to: ", dest)
-    subprocess.check_call(["pget", "-x", url, dest])
-    print("downloading took: ", time.time() - start)
 
+    try:
+        if url.endswith(".tar"):
+            subprocess.check_call(["pget", "-x", url, dest])
+        else:
+            subprocess.check_call(["wget", "-O", dest, url])
+    except subprocess.CalledProcessError as e:
+        print("Error occurred while downloading:")
+        print("Exit status:", e.returncode)
+        print("Output:", e.output)
+    except Exception as e:
+        print("An unexpected error occurred:", e)
+
+    print(f"Downloading took {time.time() - start} seconds")
 
 class Predictor(BasePredictor):
     def load_trained_weights(self, weights, pipe):

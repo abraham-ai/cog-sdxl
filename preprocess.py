@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import List, Literal, Optional, Tuple, Union
 from zipfile import ZipFile
 
+from PIL import ImageEnhance, ImageFilter
+import random
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -33,6 +35,7 @@ from transformers import (
 )
 
 MODEL_PATH = "./cache"
+MAX_GPT_PROMPTS = 40
 
 from io_utils import download_and_prep_training_data
 
@@ -246,50 +249,50 @@ def cleanup_prompts_with_chatgpt(
             1. Find a good, short name/description of the single central concept that's in all the images. This [Concept Name]  might eg already be present in the descriptions above, pick the most obvious name or words that would fit in all descriptions.
             2. Insert the text "TOK, [Concept Name]" into all the descriptions above by rephrasing them where needed to naturally contain the text TOK, [Concept Name] while keeping as much of the description as possible.
 
-            Reply by first stating the "Concept Name:", followed by a bullet point list of all the adjusted "Descriptions:".
+            Reply by first stating the "Concept Name:", followed by an enumerated list (using "-") of the revised "Descriptions:".
             """
 
     if concept_mode == "object":
         chat_gpt_prompt_1 = """
-            I have a set of images, each containing the same concept / figure. I have the following (poor) descriptions for each image:
-            """
+        Analyze a set of (poor) image descriptions each featuring the same concept, figure or thing called TOK.
+        Tasks:
+        1. Deduce a concise, fitting name for the concept (Concept Name).
+        2. Substitute this concept in each description with "TOK", rearranging or adjusting the text where needed.
+        3. Streamline each description to its core elements, ensuring clarity and mandatory inclusion of "TOK".
+        The descriptions are:
+        """
         
         chat_gpt_prompt_2 = """
-            I want you to:
-            1. Find a good, short name/description of the single central concept that's in all the images. This [Concept Name] might eg already be present in the descriptions above, pick the most obvious name or words that would fit in all descriptions.
-            2. Replace the main concept in each description with the name TOK (rephrase where needed)
-            As a result, every description should naturally contain the word TOK while keeping as much of the description as possible.
-
-            Reply by first stating the "Concept Name:", followed by a bullet point list of all the adjusted "Descriptions:".
-            """
+        Respond with the chosen "Concept Name:" followed by a list (using "-") of the revised descriptions, each mentioning "TOK".
+        """
 
     elif concept_mode == "face":
         chat_gpt_prompt_1 = """
-            I have a set of images, each containing a photo of a single person named TOK. I have the following (poor) descriptions for each image:
-            """
+        Analyze a set of (poor) image descriptions, each featuring a person named TOK.
+        Tasks:
+        1. Rewrite each description, ensuring it refers only to a single person or character.
+        2. Integrate "a photo of TOK" naturally into each description, rearranging or adjusting where needed.
+        3. Streamline each description to its core elements, ensuring clarity and mandatory inclusion of "TOK".
+        The descriptions are:
+        """
         
         chat_gpt_prompt_2 = """
-            I need you to rewrite these descriptions so that:
-            - there are no references to other people (there's only one person in each picture)
-            - each description contains the words "a photo of TOK" somewhere naturally in the sentence
-            Make sure to insert the name TOK into each description, rephrasing where needed while keeping as much of the description as possible.
-
-            Reply by first stating the "Concept Name: TOK", followed by a bullet point list of all the adjusted "Descriptions:".
-            """
+        Respond with "Concept Name: TOK" followed by a list (using "-") of the revised descriptions, each mentioning "a photo of TOK".
+        """
 
     elif concept_mode == "style":
         chat_gpt_prompt_1 = """
-            I have a set of images sharing a single style / aesthetic named TOK. I have the following (poor) descriptions for each image:
-            """
+        Analyze a set of (poor) image descriptions, each featuring the same style named TOK.
+        Tasks:
+        1. Rewrite each description to focus solely on the TOK style.
+        2. Integrate "in the style of TOK" naturally into each description, typically at the beginning.
+        3. Streamline each description to its core elements, ensuring clarity and mandatory inclusion of "TOK".
+        The descriptions are:
+        """
         
         chat_gpt_prompt_2 = """
-            I need you to rewrite these descriptions so that:
-            - there are no references to other styles (there's only one style in each picture, called TOK)
-            - each description contains the words "in the style of TOK" somewhere naturally in the sentence (usually at the end)
-            Make sure to insert the style name TOK into each description, rephrasing where needed while keeping as much of the description as possible.
-
-            Reply by first stating the "Style Name: TOK", followed by a bullet point list of all the adjusted "Descriptions:".
-            """
+        Respond with "Style Name: TOK" followed by a list (using "-") of the revised descriptions, each mentioning "in the style of TOK".
+        """
 
     final_chatgpt_prompt = chat_gpt_prompt_1 + "\n- " + "\n- ".join(prompts) + "\n\n" + chat_gpt_prompt_2
     print("Final chatgpt prompt:")
@@ -302,8 +305,7 @@ def cleanup_prompts_with_chatgpt(
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": final_chatgpt_prompt},
-            ]
-            )
+            ])
 
     gpt_completion = response.choices[0].message.content
 
@@ -391,9 +393,8 @@ def blip_captioning_dataset(
     for i, image in enumerate(tqdm(images)):
         if input_captions[i] is None:
             inputs = processor(image, return_tensors="pt").to(device, torch.float16)
-            out = model.generate(**inputs, max_length=150, do_sample=True, top_k=50, temperature=0.7)
+            out = model.generate(**inputs, max_length=100, do_sample=True, top_k=40, temperature=0.65)
             caption = processor.decode(out[0], skip_special_tokens=True)
-
             # BLIP 2 lowercases all caps tokens. This should properly replace them w/o messing up subwords.
             for token in substitution_tokens:
                 caption = caption.replace(f" {token.lower()} ", f" {token} ")
@@ -403,18 +404,17 @@ def blip_captioning_dataset(
         print(caption)
         captions.append(caption)
 
-    if len(captions)>3 and len(captions)<40 and (len(text) == 0):
-        # use chatgpt to auto-find a good trigger text and insert it naturally into the prompts:
+    if len(captions) > 3 and len(captions) < MAX_GPT_PROMPTS and not text:
         retry_count = 0
         while retry_count < 3:
             try:
-                captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode)
-                n_toks = 0
-                for caption in captions:
-                    if "TOK" in caption:
-                        n_toks += 1
-                    
-                if n_toks > int(0.8*len(captions)):
+                gpt_captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode)
+                n_toks = sum("TOK" in caption for caption in gpt_captions)
+                
+                if n_toks > int(0.8 * len(captions)):
+                    # Ensure every caption contains "TOK"
+                    gpt_captions = ["TOK, " + caption if "TOK" not in caption else caption for caption in gpt_captions]
+                    captions = gpt_captions
                     break
             except Exception as e:
                 retry_count += 1
@@ -428,12 +428,8 @@ def blip_captioning_dataset(
             print("WARNING: no captioning text was given and there's too few/many prompts to do chatgpt cleanup...")
             print("Concept mode: ", concept_mode)
             if concept_mode == "style":
-                if 1:
-                    trigger_text = "in the style of TOK, "
-                    captions = [trigger_text + caption for caption in captions]
-                else:
-                    trigger_text = ""
-
+                trigger_text = "in the style of TOK, "
+                captions = [trigger_text + caption for caption in captions]
             else:
                 trigger_text = "a photo of TOK, "
                 captions = [trigger_text + caption for caption in captions]
@@ -652,6 +648,56 @@ def load_image_with_orientation(path, mode = "RGB"):
 
     return image.convert(mode)
 
+def hue_augmentation(image, hue_change_max = 4):
+    """
+    Apply hue augmentation to the input image.
+
+    :param image: PIL Image object
+    :param hue_change: Amount to change the hue (0-360)
+    :return: Augmented PIL Image object
+    """
+    hue_change = random.uniform(1, hue_change_max)
+    # Convert the image to HSV color space
+    hsv_image = image.convert('HSV')
+
+    # Split into individual channels
+    h, s, v = hsv_image.split()
+
+    # Apply the hue change
+    h = h.point(lambda i: (i + hue_change) % 256)
+    hsv_image = Image.merge('HSV', (h, s, v))
+    return hsv_image.convert('RGB')
+
+def color_jitter(image):
+    enhancers = [ImageEnhance.Brightness, ImageEnhance.Contrast, ImageEnhance.Color]
+    factor_ranges = [[0.9, 1.1], [0.9, 1.25], [0.9, 1.2]]
+    for i, enhancer in enumerate(enhancers):
+        low, high = factor_ranges[i]
+        factor = random.uniform(low, high)
+        image = enhancer(image).enhance(factor)
+    return image
+
+def random_crop(image, scale=(0.85, 0.95)):
+    width, height = image.size
+    new_width, new_height = width * random.uniform(*scale), height * random.uniform(*scale)
+
+    left = random.uniform(0, width - new_width)
+    top = random.uniform(0, height - new_height)
+
+    return image.crop((left, top, left + new_width, top + new_height))
+
+def gaussian_blur(image, max_radius=3):
+    return image.filter(ImageFilter.GaussianBlur(radius=random.uniform(1, max_radius)))
+
+def augment_image(image):
+    image = hue_augmentation(image)
+    image = color_jitter(image)
+    image = random_crop(image)
+    if random.random() < 0.5:
+        image = gaussian_blur(image)
+    return image
+
+
 
 def load_and_save_masks_and_captions(
     concept_mode: str,
@@ -720,18 +766,47 @@ def load_and_save_masks_and_captions(
     n_captions      = len([c for c in captions if c is not None])
     print(f"Loaded {n_training_imgs} images, {n_captions} of which have captions.")
 
+    upscale_images = len(images) < 50 # otherwise this will take a long time...
+
+    if upscale_images: # upscale images that are smaller than target_size:
+        upscale_margin = 1.25
+        images_to_upscale = []
+        indices_to_replace = []
+        for idx, image in enumerate(images):
+            width, height = image.size
+            if width < target_size*upscale_margin or height < target_size*upscale_margin:
+                images_to_upscale.append(image)
+                indices_to_replace.append(idx)
+                
+        print(f"Upscaling {len(images_to_upscale)} of {len(images)} images...")
+        upscaled_images = swin_ir_sr(images_to_upscale, target_size=(int(target_size*upscale_margin), int(target_size*upscale_margin)))
+        
+        for i, idx in enumerate(indices_to_replace):
+            images[idx] = upscaled_images[i]
+
     if add_lr_flips and len(images) < 40:
         print(f"Adding LR flips... (doubling the number of images from {n_training_imgs} to {n_training_imgs*2})")
         images   = images + [image.transpose(Image.FLIP_LEFT_RIGHT) for image in images]
         captions = captions + captions
+
+    while len(images) < 15: # if we still have a very small amount of imgs, do some basic augmentation:
+        print(f"Adding augmented version of each training img...")
+        augmented_images = [augment_image(image) for image in images]
+        images.extend(augmented_images)
+        captions.extend(captions[:len(augmented_images)])
+
+    # It's nice if we can achieve the gpt pass, so if we're not losing too much, cut-off the n_images to just match what we're allowed to give to gpt:
+    if (len(images) > MAX_GPT_PROMPTS) and (len(images) < MAX_GPT_PROMPTS*1.25):
+        images = images[:MAX_GPT_PROMPTS-1]
+        captions = captions[:MAX_GPT_PROMPTS-1]
 
     # captions
     print(f"Generating {len(images)} captions using mode: {concept_mode}...")
     captions, trigger_text, gpt_concept_name = blip_captioning_dataset(
         images, captions, concept_mode, text=caption_text, substitution_tokens=substitution_tokens
     )
-
-    if gpt_concept_name is not None and ((mask_target_prompts is None) or (mask_target_prompts == "")):
+    
+    if (gpt_concept_name is not None) and ((mask_target_prompts is None) or (mask_target_prompts == "")):
         print(f"Using GPT concept name as CLIP-segmentation prompt: {gpt_concept_name}")
         mask_target_prompts = gpt_concept_name
 
@@ -769,24 +844,6 @@ def load_and_save_masks_and_captions(
         _crop_to_square(mask, com, resize_to=target_size) 
         for mask, com in zip(seg_masks, coms)
     ]
-
-    upscale_images = len(images) < 50 # otherwise this will take a long time...
-
-    if upscale_images: 
-        # upscale images that are smaller than target_size:
-        images_to_upscale = []
-        indices_to_replace = []
-        for idx, image in enumerate(images):
-            width, height = image.size
-            if width < target_size or height < target_size:
-                images_to_upscale.append(image)
-                indices_to_replace.append(idx)
-                
-        print(f"Upscaling {len(images_to_upscale)} of {len(images)} images...")
-        upscaled_images = swin_ir_sr(images_to_upscale, target_size=(target_size, target_size))
-        
-        for i, idx in enumerate(indices_to_replace):
-            images[idx] = upscaled_images[i]
 
     print("Resizing images to training size...")
     images = [

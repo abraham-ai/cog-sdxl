@@ -15,6 +15,8 @@ def hamming_distance(dict1, dict2):
 #######################################################################################
 
 """
+
+
 Faces:
 https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_2.zip
 https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_5.zip
@@ -24,7 +26,6 @@ https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets
 Objects:
 https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny_all.zip
 https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny_best.zip
-https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/koji_all.zip
 https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/koji_color.zip
 https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/plantoid_imgs.zip
 
@@ -39,31 +40,31 @@ https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets
 
 # Setup the base experiment config:
 #lora_training_urls    = "https://minio.aws.abraham.fun/creations-stg/d6f8446d13a82bc159f4b26aadca90a888493e92cf0bab1e510cb5354fb065a7.zip|https://minio.aws.abraham.fun/creations-stg/991d70ba870022aef6c893b8335fee53ed9a32e8f998e23ec9dcf2adc0ee3f76.zip|https://minio.aws.abraham.fun/creations-stg/6b25015c2f655915c90c41fc35cc5f42f8a877307c2a8affc2d47ed812cf23c3.zip|https://minio.aws.abraham.fun/creations-stg/fbdc59246ee841bb8303787155a6a0c5cae56d7545a9bd0d5d077a9d8193baff.zip"
-run_name             = "faces_sweep"
+run_name             = "objects"
 caption_prefix       = ""  # "" to activate chatgpt
 mask_target_prompts  = ""  # "" to activate chatgpt
 n_exp                = 300  # how many random experiment settings to generate
-min_hamming_distance = 3   # min_n_params that have to be different from any previous experiment to be scheduled
+min_hamming_distance = 2   # min_n_params that have to be different from any previous experiment to be scheduled
 
 # Define training hyperparameters and their possible values
 # The params are sampled stochastically, so if you want to use a specific value more often, just put it in multiple times
 hyperparameters = {
-    'lora_training_urls': ["https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_2.zip",
-                            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_5.zip",
-                            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_best.zip",
-                            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/steel.zip"],
-    'mode': ['face'],
-    'left_right_flip_augmentation': ['False'],
+    'lora_training_urls': ["https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny_all.zip",
+                            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny1.zip",
+                            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/chinaman.zip",
+                            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/plantoid_imgs.zip"],
+    'concept_mode': ['object'],
+    'left_right_flip_augmentation': ['True'],
     'resolution': [1024],
     'is_lora': ['True'],
     'hard_pivot': ['True', 'False'],
-    'ti_lr': ['3e-4', '1e-3', '3e-3'],
-    'lora_weight_decay': ['0.005', '0.015'],
+    'ti_lr': ['2e-3'],
+    'lora_weight_decay': ['0.005'],
     'ti_weight_decay': ['1e-4'],
     'lora_rank': ['4', '8', '16'],
-    'checkpointing_steps': ['20'],
-    'prodigy_d_coef': ['0.1', '0.3', '0.9'],
-    'max_train_steps': ['40'],
+    'checkpointing_steps': ['1200'],
+    'prodigy_d_coef': ['0.2', '0.6'],
+    'max_train_steps': ['1200'],
     'train_batch_size': ['2'],
     'seed': ['0'],
     'debug': ['True']   # avoid sending the entire .rar file back after each training run (takes a long time)
@@ -81,7 +82,7 @@ scheduled_experiments = set()
 os.remove(output_filename) if os.path.exists(output_filename) else None
 
 # Open the shell script file
-try_sampling_n_times = 200
+try_sampling_n_times = 500
 with open(output_filename, "w") as f:
     for exp_index in range(n_exp):  # number of combinations you want to generate
         resamples, combination = 0, None
@@ -106,8 +107,13 @@ with open(output_filename, "w") as f:
             print(f"\nCould not find a new experiment_setting after random sampling {try_sampling_n_times} times, dumping all experiment_settings to .sh script")
             break
 
+        # extract the dataset name:
+        for name, value in sorted(experiment_settings.items()): 
+            if name == "lora_training_urls":
+                dataset_name = value.split('/')[-1][:30]
+
         # add experiment_settings to run_name:
-        run_name_exp = f"{run_name}_{exp_index:03d}_{int(time.time()*1000)%10000}"
+        run_name_exp = f"{run_name}_{dataset_name}_{exp_index:03d}_{int(time.time()*1000)%10000}"
 
         f.write(f'cog predict \\\n')
         f.write(f'    -i run_name="{run_name_exp}" -i caption_prefix="{caption_prefix}" \\\n')

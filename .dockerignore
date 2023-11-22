@@ -1,6 +1,6 @@
 # Models:
 sdxl-cache/
-models/*
+#models/*
 
 # Subfolders:
 lora_models*

@@ -175,6 +175,7 @@ class Predictor(BasePredictor):
         if checkpoint != "sdxl-v1.0":
             raise ValueError("Only sdxl-v1.0 is supported for now")
 
+
         if concept_mode == "face":
             mask_target_prompts = "face"
         if concept_mode == "concept": # gracefully catch any old versions of concept_mode

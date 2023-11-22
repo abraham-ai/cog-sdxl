@@ -153,11 +153,21 @@ def get_avg_lr(optimizer):
     return average_lr
 
 
-# Helper function for multiple replacements
+import re
+
 def replace_in_string(s, replacements):
-    for target, replacement in replacements.items():
-        s = s.replace(target, replacement)
+    # Repeat until no more replacements can be made
+    while True:
+        replaced = False
+        for target, replacement in replacements.items():
+            new_s = re.sub(target, replacement, s)
+            if new_s != s:
+                s = new_s
+                replaced = True
+        if not replaced:
+            break
     return s
+
 
 def prepare_prompt_for_lora(prompt, lora_path, interpolation=False, verbose=True):
     if "_no_token" in lora_path:
@@ -231,10 +241,10 @@ def prepare_prompt_for_lora(prompt, lora_path, interpolation=False, verbose=True
 
     # Fix common mistakes
     fix_replacements = {
-        ",,": ",",
-        "  ": " ",
-        " .": ".",
-        " ,": ","
+        r",,": ",",
+        r"\s\s+": " ",  # Replaces one or more whitespace characters with a single space
+        r"\s\.": ".",
+        r"\s,": ","
     }
     prompt = replace_in_string(prompt, fix_replacements)
 
@@ -363,7 +373,7 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
         json.dump(args_dict, f, indent=4)
 
     if n_imgs > 0:
-        render_images(f"{output_dir}", global_step, seed, is_lora)
+        render_images(f"{output_dir}", global_step, seed, is_lora, n_imgs = n_imgs)
 
 
 
@@ -577,7 +587,7 @@ def main(
                         safeguard_warmup=True,
                         weight_decay=lora_weight_decay,
                         betas=(0.9, 0.99),
-                        growth_rate=1.02,  # this slows down the lr_rampup
+                        growth_rate=1.025,  # this slows down the lr_rampup
                     )
         
         optimizer = torch.optim.AdamW(
