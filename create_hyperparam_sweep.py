@@ -21,20 +21,18 @@ run_name             = "flickr_style_tests"
 caption_prefix       = ""  # "" to activate chatgpt
 mask_target_prompts  = ""  # "" to activate chatgpt
 n_exp                = 300  # how many random experiment settings to generate
-min_hamming_distance = 1   # min_n_params that have to be different from any previous experiment to be scheduled
+min_hamming_distance = 2   # min_n_params that have to be different from any previous experiment to be scheduled
 
 # Define training hyperparameters and their possible values
 # The params are sampled stochastically, so if you want to use a specific value more often, just put it in multiple times
 hyperparameters = {
-    'lora_training_urls': ["https://minio.aws.abraham.fun/creations-stg/d6f8446d13a82bc159f4b26aadca90a888493e92cf0bab1e510cb5354fb065a7.zip|https://minio.aws.abraham.fun/creations-stg/991d70ba870022aef6c893b8335fee53ed9a32e8f998e23ec9dcf2adc0ee3f76.zip|https://minio.aws.abraham.fun/creations-stg/6b25015c2f655915c90c41fc35cc5f42f8a877307c2a8affc2d47ed812cf23c3.zip|https://minio.aws.abraham.fun/creations-stg/fbdc59246ee841bb8303787155a6a0c5cae56d7545a9bd0d5d077a9d8193baff.zip"],
-    'mode': ['style'],
-    'left_right_flip_augmentation': ['True'],
-    'resolution': [960],
+    'lora_training_urls': ["https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_best.zip", "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/steel.zip"],
+    'mode': ['face'],
+    'left_right_flip_augmentation': ['False'],
+    'resolution': [1024],
     'is_lora': ['True'],
-    'hard_pivot': ['True'],
-    'unet_learning_rate': ['1e-6', '1e-5'],
-    'lora_lr': ['1e-4'],
-    'ti_lr': ['5e-4'],
+    'hard_pivot': ['True', 'False'],
+    'ti_lr': ['2e-3'],
     'lora_weight_decay': ['1e-4'],
     'ti_weight_decay': ['1e-4'],
     'off_ratio_power': ['0.1'],

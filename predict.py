@@ -76,7 +76,7 @@ class Predictor(BasePredictor):
         ),
         max_train_steps: int = Input(
             description="Number of individual training steps. Takes precedence over num_train_epochs",
-            default=800,
+            default=1200,
         ),
         checkpointing_steps: int = Input(
             description="Number of steps between saving checkpoints. Set to very very high number to disable checkpointing, because you don't need one.",
@@ -153,7 +153,7 @@ class Predictor(BasePredictor):
         ),
         hard_pivot: bool = Input(
             description="Use hard freeze for ti_lr. If set to False, will use soft transition of learning rates",
-            default=True,
+            default=False,
         ),
         off_ratio_power: float = Input(
             description="How strongly to correct the embedding std vs the avg-std (0=off, 0.05=weak, 0.1=standard)",
@@ -173,6 +173,7 @@ class Predictor(BasePredictor):
             concept_mode = "object"
 
         print(f"cog:predict:train_lora:{concept_mode}")
+        #print("error %d" %'error')
 
         # Hard-code token_map for now. Make it configurable once we support multiple concepts or user-uploaded caption csv.
         token_string = "TOK"
@@ -267,7 +268,6 @@ class Predictor(BasePredictor):
             verbose=verbose,
             checkpointing_steps=checkpointing_steps,
             scale_lr=False,
-            max_grad_norm=1.0,
             allow_tf32=True,
             mixed_precision="bf16",
             device="cuda:0",

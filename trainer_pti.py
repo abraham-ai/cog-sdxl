@@ -57,29 +57,6 @@ def plot_torch_hist(parameters, epoch, checkpoint_dir, name, bins=100, min_val=-
     plt.savefig(f"{checkpoint_dir}/{name}_histogram_{epoch:04d}.png")
     plt.close()
 
-
-def plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path='learning_rates.png'):
-    epochs = range(first_epoch, num_train_epochs)
-    lora_lrs = []
-    ti_lrs = []
-    
-    for epoch in epochs:
-        completion_f = epoch / num_train_epochs
-        # param_groups[0] goes from 0.0 to lora_lr over the course of training
-        lora_lrs.append(lora_lr * completion_f ** lr_ramp_power)
-        # param_groups[1] goes from ti_lr to 0.0 over the course of training
-        ti_lrs.append(ti_lr * (1 - completion_f) ** lr_ramp_power)
-        
-    plt.figure()
-    plt.plot(epochs, lora_lrs, label='LoRA LR')
-    plt.plot(epochs, ti_lrs, label='TI LR')
-    plt.xlabel('Epoch')
-    plt.ylabel('Learning Rate')
-    plt.title('Learning Rate Curves')
-    plt.legend()
-    plt.savefig(save_path)
-    plt.close()
-
 # plot the learning rates:
 def plot_lrs(lora_lrs, ti_lrs, save_path='learning_rates.png'):
     plt.figure()
@@ -393,17 +370,17 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
 def main(
     pretrained_model_name_or_path: Optional[
         str
-    ] = "./cache",  # "stabilityai/stable-diffusion-xl-base-1.0",
+    ] = "./cache",
     revision: Optional[str] = None,
     instance_data_dir: Optional[str] = "./dataset/zeke/captions.csv",
-    output_dir: str = "ft_masked_coke",
+    output_dir: str = "lora_output",
     seed: Optional[int] = random.randint(0, 2**32 - 1),
-    resolution: int = 512,
+    resolution: int = 768,
     crops_coords_top_left_h: int = 0,
     crops_coords_top_left_w: int = 0,
     train_batch_size: int = 1,
     do_cache: bool = True,
-    num_train_epochs: int = 600,
+    num_train_epochs: int = 10000,
     max_train_steps: Optional[int] = None,
     checkpointing_steps: int = 500000,  # default to no checkpoints
     gradient_accumulation_steps: int = 1,  # todo
@@ -418,7 +395,6 @@ def main(
     lr_num_cycles: int = 1,
     lr_power: float = 1.0,
     dataloader_num_workers: int = 0,
-    max_grad_norm: float = 1.0,  # todo with tests
     allow_tf32: bool = True,
     mixed_precision: Optional[str] = "bf16",
     device: str = "cuda:0",
@@ -426,7 +402,7 @@ def main(
     inserting_list_tokens: List[str] = ["<s0>"],
     verbose: bool = True,
     is_lora: bool = True,
-    lora_rank: int = 32,
+    lora_rank: int = 8,
     args_dict: dict = {},
     debug: bool = False,
     hard_pivot: bool = True,
@@ -593,14 +569,14 @@ def main(
         # Note: the specific settings of Prodigy seem to matter A LOT
         optimizer_prod = prodigyopt.Prodigy(
                         params_to_optimize_prodigy,
-                        d_coef = 0.25,
+                        d_coef = 0.33,
                         lr=1.0,
                         decouple=True,
                         use_bias_correction=True,
                         safeguard_warmup=True,
                         weight_decay=0.005,
                         betas=(0.9, 0.99),
-                        growth_rate=1.015,  # this slows down the lr_rampup
+                        growth_rate=1.02,  # this slows down the lr_rampup
                     )
         
         optimizer = torch.optim.AdamW(
@@ -675,11 +651,9 @@ def main(
 
     # Experimental: warmup the token embeddings using CLIP-similarity:
     #embedding_handler.pre_optimize_token_embeddings(train_dataset)
-
-    lr_ramp_power = 3.0
+    
     ti_lrs, lora_lrs = [], []
-    #plot_learning_rates(first_epoch, num_train_epochs, lr_ramp_power, lora_lr, ti_lr, save_path=os.path.join(checkpoint_dir, 'learning_rates.png'))
-
+    
     # Count the total number of lora parameters
     total_n_lora_params = sum(p.numel() for p in unet_lora_parameters)
 
@@ -707,10 +681,10 @@ def main(
                         optimizer = None
 
             else: # Update learning rates gradually:
-                completion_f = epoch / num_train_epochs
+                finegrained_epoch = epoch + step / len(train_dataloader)
+                completion_f = finegrained_epoch / num_train_epochs
                 # param_groups[1] goes from ti_lr to 0.0 over the course of training
-                optimizer.param_groups[0]['lr'] = ti_lr * (1 - completion_f) ** lr_ramp_power
-
+                optimizer.param_groups[0]['lr'] = ti_lr * (1 - completion_f) ** 2.0
 
             progress_bar.update(1)
             progress_bar.set_description(f"# PTI :step: {global_step}, epoch: {epoch}")
@@ -744,7 +718,6 @@ def main(
             pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
 
             # Create Spatial-dimensional conditions.
-
             original_size = (resolution, resolution)
             target_size = (resolution, resolution)
             crops_coords_top_left = (crops_coords_top_left_h, crops_coords_top_left_w)
@@ -770,6 +743,11 @@ def main(
             timesteps = timesteps.long()
 
             noisy_model_input = noise_scheduler.add_noise(vae_latent, noise, timesteps)
+
+            noise_sigma = 0.0
+            if noise_sigma > 0.0: # apply random noise to the conditioning vectors:
+                #prompt_embeds_shape = [2,77,2048]
+                prompt_embeds[0,1:-2,:] += torch.randn_like(prompt_embeds[0,1:-2,:]) * noise_sigma
 
             # Predict the noise residual
             model_pred = unet(
@@ -801,7 +779,7 @@ def main(
 
             # every step, we reset the non-trainable embeddings to the original embeddings.
             embedding_handler.retract_embeddings(off_ratio_power = off_ratio_power, print_stds = (global_step % 50 == 0))
-
+            
             # Track the learning rates for final plotting:
             try:
                 ti_lrs.append(optimizer.param_groups[0]['lr'])
@@ -810,17 +788,22 @@ def main(
 
             lora_lrs.append(get_avg_lr(optimizer_prod))
 
+
+            # Save intermediate results:
+            output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
+            if (global_step == 50) and debug: # mostly to visualize the initial token embeddings after a small amount of gradient steps
+                save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
+
             # Print some statistics:
             if (global_step % checkpointing_steps == 0) and (global_step > 0):
                 plot_loss(losses, save_path=f'{output_dir}/losses.png')
                 plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
-                output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
                 last_save_step = global_step
 
 
     # final_save
-    if (global_step - last_save_step) > 201:
+    if (global_step - last_save_step) > 101:
         output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
     else:
         output_save_dir = f"{checkpoint_dir}/checkpoint-{last_save_step}"
