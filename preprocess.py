@@ -34,10 +34,38 @@ from transformers import (
     Swin2SRImageProcessor,
 )
 
+from io_utils import download_and_prep_training_data
+
+import re
+import openai
+from openai import OpenAI
+from dotenv import load_dotenv
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 MODEL_PATH = "./cache"
 MAX_GPT_PROMPTS = 40
 
-from io_utils import download_and_prep_training_data
+
+import re
+def fix_prompt(prompt: str):
+    # Remove extra commas and spaces, and fix space before punctuation
+    prompt = re.sub(r"\s+", " ", prompt)  # Replace multiple spaces with a single space
+    prompt = re.sub(r",,", ",", prompt)  # Replace double commas with a single comma
+    prompt = re.sub(r"\s?,\s?", ", ", prompt)  # Fix spaces around commas
+    prompt = re.sub(r"\s?\.\s?", ". ", prompt)  # Fix spaces around periods
+    return prompt.strip()  # Remove leading and trailing whitespace
+
+
+def _find_files(pattern, dir="."):
+    """Return list of files matching pattern in a given directory, in absolute format.
+    Unlike glob, this is case-insensitive.
+    """
+
+    rule = re.compile(fnmatch.translate(pattern), re.IGNORECASE)
+    return [os.path.join(dir, f) for f in os.listdir(dir) if rule.match(f)]
+
+
 
 def preprocess(
     working_directory,
@@ -51,6 +79,7 @@ def preprocess(
     temp: float,
     substitution_tokens: List[str],
     left_right_flip_augmentation: bool = False,
+    augment_imgs_up_to_n: int = 0,
 ) -> Path:
 
     # clear TEMP_IN_DIR first.
@@ -109,6 +138,7 @@ def preprocess(
         temp=temp,
         substitution_tokens=substitution_tokens,
         add_lr_flips = left_right_flip_augmentation,
+        augment_imgs_up_to_n = augment_imgs_up_to_n,
     )
 
     return Path(TEMP_OUT_DIR), n_training_imgs, trigger_text, segmentation_prompt, captions
@@ -185,13 +215,13 @@ def clipseg_mask_generator(
         print(
             f'Warning: only one target prompt "{target_prompts}" was given, so it will be used for all images'
         )
-
         target_prompts = [target_prompts] * len(images)
 
-    processor = CLIPSegProcessor.from_pretrained(model_id, cache_dir=MODEL_PATH)
-    model = CLIPSegForImageSegmentation.from_pretrained(
-        model_id, cache_dir=MODEL_PATH
-    ).to(device)
+    if any(target_prompts):
+        processor = CLIPSegProcessor.from_pretrained(model_id, cache_dir=MODEL_PATH)
+        model = CLIPSegForImageSegmentation.from_pretrained(
+            model_id, cache_dir=MODEL_PATH
+        ).to(device)
 
     masks = []
 
@@ -226,17 +256,11 @@ def clipseg_mask_generator(
 
     return masks
 
-import re
-import openai
-from openai import OpenAI
-from dotenv import load_dotenv
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 def cleanup_prompts_with_chatgpt(
     prompts, 
     concept_mode,    # face / object / style
-    chatgpt_mode = "chat-completion",
     verbose = True):
 
     if concept_mode == "object_injection":
@@ -257,7 +281,7 @@ def cleanup_prompts_with_chatgpt(
         Analyze a set of (poor) image descriptions each featuring the same concept, figure or thing called TOK.
         Tasks:
         1. Deduce a concise, fitting name for the concept (Concept Name).
-        2. Substitute this concept in each description with "TOK", rearranging or adjusting the text where needed.
+        2. Substitute this concept in each description with "TOK", rearranging or adjusting the text where needed. Hallucinate TOK into the description if necessary (but dont mention when doing so, only provide the final description)!
         3. Streamline each description to its core elements, ensuring clarity and mandatory inclusion of "TOK".
         The descriptions are:
         """
@@ -318,39 +342,39 @@ def cleanup_prompts_with_chatgpt(
         if line.startswith("-"):
             prompts.append(line[2:])
 
-    trigger_text = "TOK"
+    gpt_concept_name = extract_gpt_concept_name(gpt_completion, concept_mode)
 
-    if concept_mode == 'face':
-        gpt_concept_name = "face"
-    elif concept_mode == 'object_injection' or concept_mode == 'object':
-        # extract the [Concept Name] from the response:
-        for line in gpt_completion.split("\n"):
-            if line.startswith("Concept Name:"):
-                gpt_concept_name = line[14:]
-                break
-        if concept_mode == 'object_injection':
-            trigger_text = "TOK, " + gpt_concept_name
+    trigger_text = "TOK, " + gpt_concept_name if concept_mode == 'object_injection' else "TOK"
 
-    elif concept_mode == 'style':
-        # extract the [Style Name] from the response:
-        for line in gpt_completion.split("\n"):
-            if line.startswith("Style Name:"):
-                gpt_concept_name = line[12:]
-                break
+    if concept_mode == 'style':
         trigger_text = ", in the style of TOK"
-        gpt_concept_name = "" #disables segmentation for style (use full img)
+        gpt_concept_name = ""  # Disables segmentation for style (use full img)
 
     return prompts, gpt_concept_name, trigger_text
 
+def extract_gpt_concept_name(gpt_completion, concept_mode):
+    """
+    Extracts the concept name from the GPT completion based on the concept mode.
+    """
+    concept_name = ""
+    prefix = ""
+    if concept_mode in ['face', 'style']:
+        concept_name = concept_mode
+        prefix = "Style Name:" if concept_mode == 'style' else ""
+    elif concept_mode in ['object_injection', 'object']:
+        prefix = "Concept Name:"
+        concept_mode = 'object_injection'
 
-def fix_prompt(prompt: str):
-    # fix some common mistakes:
-    prompt = prompt.replace(",,", ",")
-    prompt = prompt.replace("  ", " ")
-    prompt = prompt.replace(" .", ".")
-    prompt = prompt.replace(" ,", ",")
+    if prefix:
+        for line in gpt_completion.split("\n"):
+            if line.startswith(prefix):
+                concept_name = line[len(prefix):].strip()
+                break
 
-    return prompt
+    return concept_name
+
+
+
 
 @torch.no_grad()
 def blip_captioning_dataset(
@@ -425,7 +449,7 @@ def blip_captioning_dataset(
     else:
         # simple concat of trigger text with rest of prompt:
         if len(text) == 0:
-            print("WARNING: no captioning text was given and there's too few/many prompts to do chatgpt cleanup...")
+            print("WARNING: no captioning text was given and we're not doing chatgpt cleanup...")
             print("Concept mode: ", concept_mode)
             if concept_mode == "style":
                 trigger_text = "in the style of TOK, "
@@ -437,12 +461,321 @@ def blip_captioning_dataset(
             trigger_text = text
             captions = [trigger_text + ", " + caption for caption in captions]
 
-        
         gpt_concept_name = None
 
     captions = [fix_prompt(caption) for caption in captions]
 
     return captions, trigger_text, gpt_concept_name
+
+
+
+def _crop_to_square(
+    image: Image.Image, com: List[Tuple[int, int]], resize_to: Optional[int] = None
+):
+    cx, cy = com
+    width, height = image.size
+    if width > height:
+        left_possible = max(cx - height / 2, 0)
+        left = min(left_possible, width - height)
+        right = left + height
+        top = 0
+        bottom = height
+    else:
+        left = 0
+        right = width
+        top_possible = max(cy - width / 2, 0)
+        top = min(top_possible, height - width)
+        bottom = top + width
+
+    image = image.crop((left, top, right, bottom))
+
+    if resize_to:
+        image = image.resize((resize_to, resize_to), Image.Resampling.LANCZOS)
+
+    return image
+
+
+def _center_of_mass(mask: Image.Image):
+    """
+    Returns the center of mass of the mask
+    """
+    x, y = np.meshgrid(np.arange(mask.size[0]), np.arange(mask.size[1]))
+    mask_np = np.array(mask) + 0.01
+    x_ = x * mask_np
+    y_ = y * mask_np
+
+    x = np.sum(x_) / np.sum(mask_np)
+    y = np.sum(y_) / np.sum(mask_np)
+
+    return x, y
+
+
+def load_image_with_orientation(path, mode = "RGB"):
+    image = Image.open(path)
+
+    # Try to get the Exif orientation tag (0x0112), if it exists
+    try:
+        exif_data = image._getexif()
+        orientation = exif_data.get(0x0112)
+    except (AttributeError, KeyError, IndexError):
+        orientation = None
+
+    # Apply the orientation, if it's present
+    if orientation:
+        if orientation == 2:
+            image = image.transpose(Image.FLIP_LEFT_RIGHT)
+        elif orientation == 3:
+            image = image.rotate(180)
+        elif orientation == 4:
+            image = image.transpose(Image.FLIP_TOP_BOTTOM)
+        elif orientation == 5:
+            image = image.rotate(-90).transpose(Image.FLIP_LEFT_RIGHT)
+        elif orientation == 6:
+            image = image.rotate(-90)
+        elif orientation == 7:
+            image = image.rotate(90).transpose(Image.FLIP_LEFT_RIGHT)
+        elif orientation == 8:
+            image = image.rotate(90)
+
+    return image.convert(mode)
+
+def hue_augmentation(image, hue_change_max = 4):
+    """
+    Apply hue augmentation to the input image.
+
+    :param image: PIL Image object
+    :param hue_change: Amount to change the hue (0-360)
+    :return: Augmented PIL Image object
+    """
+    hue_change = random.uniform(1, hue_change_max)
+    # Convert the image to HSV color space
+    hsv_image = image.convert('HSV')
+
+    # Split into individual channels
+    h, s, v = hsv_image.split()
+
+    # Apply the hue change
+    h = h.point(lambda i: (i + hue_change) % 256)
+    hsv_image = Image.merge('HSV', (h, s, v))
+    return hsv_image.convert('RGB')
+
+def color_jitter(image):
+    enhancers = [ImageEnhance.Brightness, ImageEnhance.Contrast, ImageEnhance.Color]
+    factor_ranges = [[0.9, 1.1], [0.9, 1.25], [0.9, 1.2]]
+    for i, enhancer in enumerate(enhancers):
+        low, high = factor_ranges[i]
+        factor = random.uniform(low, high)
+        image = enhancer(image).enhance(factor)
+    return image
+
+def random_crop(image, scale=(0.85, 0.95)):
+    width, height = image.size
+    new_width, new_height = width * random.uniform(*scale), height * random.uniform(*scale)
+
+    left = random.uniform(0, width - new_width)
+    top = random.uniform(0, height - new_height)
+
+    return image.crop((left, top, left + new_width, top + new_height))
+
+def gaussian_blur(image, max_radius=2):
+    return image.filter(ImageFilter.GaussianBlur(radius=random.uniform(1, max_radius)))
+
+def augment_image(image):
+    image = hue_augmentation(image)
+    image = color_jitter(image)
+    image = random_crop(image)
+    if random.random() < 0.5:
+        image = gaussian_blur(image)
+    return image
+
+
+
+def load_and_save_masks_and_captions(
+    concept_mode: str,
+    files: Union[str, List[str]],
+    output_dir: str = "tmp_out",
+    caption_text: Optional[str] = None,
+    mask_target_prompts: Optional[Union[List[str], str]] = None,
+    target_size: int = 1024,
+    crop_based_on_salience: bool = True,
+    use_face_detection_instead: bool = False,
+    temp: float = 1.0,
+    n_length: int = -1,
+    substitution_tokens: Optional[List[str]] = None,
+    add_lr_flips: bool = False,
+    augment_imgs_up_to_n: int = 0,
+):
+    """
+    Loads images from the given files, generates masks for them, and saves the masks and captions and upscale images
+    to output dir. If mask_target_prompts is given, it will generate kinda-segmentation-masks for the prompts and save them as well.
+
+    Example:
+    >>> x = load_and_save_masks_and_captions(
+                "face",
+                files="./data/images",
+                output_dir="./data/masks_and_captions",
+                caption_text="a photo of",
+                mask_target_prompts="cat",
+                target_size=768,
+                crop_based_on_salience=True,
+                use_face_detection_instead=False,
+                temp=1.0,
+                n_length=-1,
+            )
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    # load images
+    if isinstance(files, str):
+        if os.path.isdir(files):
+            print("Scanning directory for images...")
+            # get all the .png .jpg in the directory
+            files = (
+                _find_files("*.png", files)
+                + _find_files("*.jpg", files)
+                + _find_files("*.jpeg", files)
+            )
+
+        if len(files) == 0:
+            raise Exception(
+                f"No files found in {files}. Either {files} is not a directory or it does not contain any .png or .jpg/jpeg files."
+            )
+        if n_length == -1:
+            n_length = len(files)
+        files = sorted(files)[:n_length]
+        
+    images, captions = [], []
+    for file in files:
+        images.append(load_image_with_orientation(file))
+        caption_file = os.path.splitext(file)[0] + ".txt"
+        if os.path.exists(caption_file):
+            with open(caption_file, "r") as f:
+                captions.append(f.read())
+        else:
+            captions.append(None)
+
+    n_training_imgs = len(images)
+    n_captions      = len([c for c in captions if c is not None])
+    print(f"Loaded {n_training_imgs} images, {n_captions} of which have captions.")
+
+    upscale_images = len(images) < 50 # otherwise this will take a long time...
+
+    if upscale_images: # upscale images that are smaller than target_size:
+        upscale_margin = 1.25
+        images_to_upscale = []
+        indices_to_replace = []
+        for idx, image in enumerate(images):
+            width, height = image.size
+            if width < target_size*upscale_margin or height < target_size*upscale_margin:
+                images_to_upscale.append(image)
+                indices_to_replace.append(idx)
+                
+        print(f"Upscaling {len(images_to_upscale)} of {len(images)} images...")
+        upscaled_images = swin_ir_sr(images_to_upscale, target_size=(int(target_size*upscale_margin), int(target_size*upscale_margin)))
+        
+        for i, idx in enumerate(indices_to_replace):
+            images[idx] = upscaled_images[i]
+
+    if add_lr_flips and len(images) < 40:
+        print(f"Adding LR flips... (doubling the number of images from {n_training_imgs} to {n_training_imgs*2})")
+        images   = images + [image.transpose(Image.FLIP_LEFT_RIGHT) for image in images]
+        captions = captions + captions
+
+    # It's nice if we can achieve the gpt pass, so if we're not losing too much, cut-off the n_images to just match what we're allowed to give to gpt:
+    if (len(images) > MAX_GPT_PROMPTS) and (len(images) < MAX_GPT_PROMPTS*1.33):
+        images = images[:MAX_GPT_PROMPTS-1]
+        captions = captions[:MAX_GPT_PROMPTS-1]
+
+    # captions
+    print(f"Generating {len(images)} captions using mode: {concept_mode}...")
+    captions, trigger_text, gpt_concept_name = blip_captioning_dataset(
+        images, captions, concept_mode, text=caption_text, substitution_tokens=substitution_tokens
+    )
+
+    aug_imgs, aug_caps = [],[]
+    while len(images) + len(aug_imgs) < augment_imgs_up_to_n: # if we still have a very small amount of imgs, do some basic augmentation:
+        print(f"Adding augmented version of each training img...")
+        aug_imgs.extend([augment_image(image) for image in images])
+        aug_caps.extend(captions)
+
+    images.extend(aug_imgs)
+    captions.extend(aug_caps)
+    
+    if (gpt_concept_name is not None) and ((mask_target_prompts is None) or (mask_target_prompts == "")):
+        print(f"Using GPT concept name as CLIP-segmentation prompt: {gpt_concept_name}")
+        mask_target_prompts = gpt_concept_name
+
+    if mask_target_prompts is None:
+        print("Disabling CLIP-segmentation")
+        mask_target_prompts = ""
+        temp = 999
+
+    print(f"Generating {len(images)} masks...")
+    if not use_face_detection_instead:
+        seg_masks = clipseg_mask_generator(
+            images=images, target_prompts=mask_target_prompts, temp=temp
+        )
+    else:
+        mask_target_prompts = "FACE detection was used"
+        if add_lr_flips:
+            print("WARNING you are applying face detection while also doing left-right flips, this might not be what you intended?")
+        seg_masks = face_mask_google_mediapipe(images=images)
+
+    print("Masks generated! Cropping images to center of mass...")
+    # find the center of mass of the mask
+    if crop_based_on_salience:
+        coms = [_center_of_mass(mask) for mask in seg_masks]
+    else:
+        coms = [(image.size[0] / 2, image.size[1] / 2) for image in images]
+        
+    # based on the center of mass, crop the image to a square
+    print("Cropping squares...")
+    images = [
+        _crop_to_square(image, com, resize_to=None) 
+        for image, com in zip(images, coms)
+    ]
+
+    seg_masks = [
+        _crop_to_square(mask, com, resize_to=target_size) 
+        for mask, com in zip(seg_masks, coms)
+    ]
+
+    print("Resizing images to training size...")
+    images = [
+        image.resize((target_size, target_size), Image.Resampling.LANCZOS)
+        for image in images
+    ]
+
+    data = []
+    # clean TEMP_OUT_DIR first
+    if os.path.exists(output_dir):
+        for file in os.listdir(output_dir):
+            os.remove(os.path.join(output_dir, file))
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # iterate through the images, masks, and captions and add a row to the dataframe for each
+    print("Saving final training dataset...")
+    for idx, (image, mask, caption) in enumerate(zip(images, seg_masks, captions)):
+
+        image_name = f"{idx}.src.jpg"
+        mask_file = f"{idx}.mask.jpg"
+        # save the image and mask files
+        image.save(os.path.join(output_dir, image_name), quality=95)
+        mask.save(os.path.join(output_dir, mask_file), quality=95)
+
+        # add a new row to the dataframe with the file names and caption
+        data.append(
+            {"image_path": image_name, "mask_path": mask_file, "caption": caption},
+        )
+
+    df = pd.DataFrame(columns=["image_path", "mask_path", "caption"], data=data)
+    # save the dataframe to a CSV file
+    df.to_csv(os.path.join(output_dir, "captions.csv"), index=False)
+    print("---> Training data 100% ready to go!")
+
+    return n_training_imgs, trigger_text, mask_target_prompts, captions
+
 
 
 def face_mask_google_mediapipe(
@@ -576,316 +909,3 @@ def face_mask_google_mediapipe(
             masks.append(Image.new("L", (iw, ih), 255))
 
     return masks
-
-
-def _crop_to_square(
-    image: Image.Image, com: List[Tuple[int, int]], resize_to: Optional[int] = None
-):
-    cx, cy = com
-    width, height = image.size
-    if width > height:
-        left_possible = max(cx - height / 2, 0)
-        left = min(left_possible, width - height)
-        right = left + height
-        top = 0
-        bottom = height
-    else:
-        left = 0
-        right = width
-        top_possible = max(cy - width / 2, 0)
-        top = min(top_possible, height - width)
-        bottom = top + width
-
-    image = image.crop((left, top, right, bottom))
-
-    if resize_to:
-        image = image.resize((resize_to, resize_to), Image.Resampling.LANCZOS)
-
-    return image
-
-
-def _center_of_mass(mask: Image.Image):
-    """
-    Returns the center of mass of the mask
-    """
-    x, y = np.meshgrid(np.arange(mask.size[0]), np.arange(mask.size[1]))
-    mask_np = np.array(mask) + 0.01
-    x_ = x * mask_np
-    y_ = y * mask_np
-
-    x = np.sum(x_) / np.sum(mask_np)
-    y = np.sum(y_) / np.sum(mask_np)
-
-    return x, y
-
-
-def load_image_with_orientation(path, mode = "RGB"):
-    image = Image.open(path)
-
-    # Try to get the Exif orientation tag (0x0112), if it exists
-    try:
-        exif_data = image._getexif()
-        orientation = exif_data.get(0x0112)
-    except (AttributeError, KeyError, IndexError):
-        orientation = None
-
-    # Apply the orientation, if it's present
-    if orientation:
-        if orientation == 2:
-            image = image.transpose(Image.FLIP_LEFT_RIGHT)
-        elif orientation == 3:
-            image = image.rotate(180)
-        elif orientation == 4:
-            image = image.transpose(Image.FLIP_TOP_BOTTOM)
-        elif orientation == 5:
-            image = image.rotate(-90).transpose(Image.FLIP_LEFT_RIGHT)
-        elif orientation == 6:
-            image = image.rotate(-90)
-        elif orientation == 7:
-            image = image.rotate(90).transpose(Image.FLIP_LEFT_RIGHT)
-        elif orientation == 8:
-            image = image.rotate(90)
-
-    return image.convert(mode)
-
-def hue_augmentation(image, hue_change_max = 4):
-    """
-    Apply hue augmentation to the input image.
-
-    :param image: PIL Image object
-    :param hue_change: Amount to change the hue (0-360)
-    :return: Augmented PIL Image object
-    """
-    hue_change = random.uniform(1, hue_change_max)
-    # Convert the image to HSV color space
-    hsv_image = image.convert('HSV')
-
-    # Split into individual channels
-    h, s, v = hsv_image.split()
-
-    # Apply the hue change
-    h = h.point(lambda i: (i + hue_change) % 256)
-    hsv_image = Image.merge('HSV', (h, s, v))
-    return hsv_image.convert('RGB')
-
-def color_jitter(image):
-    enhancers = [ImageEnhance.Brightness, ImageEnhance.Contrast, ImageEnhance.Color]
-    factor_ranges = [[0.9, 1.1], [0.9, 1.25], [0.9, 1.2]]
-    for i, enhancer in enumerate(enhancers):
-        low, high = factor_ranges[i]
-        factor = random.uniform(low, high)
-        image = enhancer(image).enhance(factor)
-    return image
-
-def random_crop(image, scale=(0.85, 0.95)):
-    width, height = image.size
-    new_width, new_height = width * random.uniform(*scale), height * random.uniform(*scale)
-
-    left = random.uniform(0, width - new_width)
-    top = random.uniform(0, height - new_height)
-
-    return image.crop((left, top, left + new_width, top + new_height))
-
-def gaussian_blur(image, max_radius=3):
-    return image.filter(ImageFilter.GaussianBlur(radius=random.uniform(1, max_radius)))
-
-def augment_image(image):
-    image = hue_augmentation(image)
-    image = color_jitter(image)
-    image = random_crop(image)
-    if random.random() < 0.5:
-        image = gaussian_blur(image)
-    return image
-
-
-
-def load_and_save_masks_and_captions(
-    concept_mode: str,
-    files: Union[str, List[str]],
-    output_dir: str = "tmp_out",
-    caption_text: Optional[str] = None,
-    mask_target_prompts: Optional[Union[List[str], str]] = None,
-    target_size: int = 1024,
-    crop_based_on_salience: bool = True,
-    use_face_detection_instead: bool = False,
-    temp: float = 1.0,
-    n_length: int = -1,
-    substitution_tokens: Optional[List[str]] = None,
-    add_lr_flips: bool = False,
-):
-    """
-    Loads images from the given files, generates masks for them, and saves the masks and captions and upscale images
-    to output dir. If mask_target_prompts is given, it will generate kinda-segmentation-masks for the prompts and save them as well.
-
-    Example:
-    >>> x = load_and_save_masks_and_captions(
-                "face",
-                files="./data/images",
-                output_dir="./data/masks_and_captions",
-                caption_text="a photo of",
-                mask_target_prompts="cat",
-                target_size=768,
-                crop_based_on_salience=True,
-                use_face_detection_instead=False,
-                temp=1.0,
-                n_length=-1,
-            )
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    # load images
-    if isinstance(files, str):
-        if os.path.isdir(files):
-            print("Scanning directory for images...")
-            # get all the .png .jpg in the directory
-            files = (
-                _find_files("*.png", files)
-                + _find_files("*.jpg", files)
-                + _find_files("*.jpeg", files)
-            )
-
-        if len(files) == 0:
-            raise Exception(
-                f"No files found in {files}. Either {files} is not a directory or it does not contain any .png or .jpg/jpeg files."
-            )
-        if n_length == -1:
-            n_length = len(files)
-        files = sorted(files)[:n_length]
-        
-    images, captions = [], []
-    for file in files:
-        images.append(load_image_with_orientation(file))
-        caption_file = os.path.splitext(file)[0] + ".txt"
-        if os.path.exists(caption_file):
-            with open(caption_file, "r") as f:
-                captions.append(f.read())
-        else:
-            captions.append(None)
-
-    n_training_imgs = len(images)
-    n_captions      = len([c for c in captions if c is not None])
-    print(f"Loaded {n_training_imgs} images, {n_captions} of which have captions.")
-
-    upscale_images = len(images) < 50 # otherwise this will take a long time...
-
-    if upscale_images: # upscale images that are smaller than target_size:
-        upscale_margin = 1.25
-        images_to_upscale = []
-        indices_to_replace = []
-        for idx, image in enumerate(images):
-            width, height = image.size
-            if width < target_size*upscale_margin or height < target_size*upscale_margin:
-                images_to_upscale.append(image)
-                indices_to_replace.append(idx)
-                
-        print(f"Upscaling {len(images_to_upscale)} of {len(images)} images...")
-        upscaled_images = swin_ir_sr(images_to_upscale, target_size=(int(target_size*upscale_margin), int(target_size*upscale_margin)))
-        
-        for i, idx in enumerate(indices_to_replace):
-            images[idx] = upscaled_images[i]
-
-    if add_lr_flips and len(images) < 40:
-        print(f"Adding LR flips... (doubling the number of images from {n_training_imgs} to {n_training_imgs*2})")
-        images   = images + [image.transpose(Image.FLIP_LEFT_RIGHT) for image in images]
-        captions = captions + captions
-
-    while len(images) < 15: # if we still have a very small amount of imgs, do some basic augmentation:
-        print(f"Adding augmented version of each training img...")
-        augmented_images = [augment_image(image) for image in images]
-        images.extend(augmented_images)
-        captions.extend(captions[:len(augmented_images)])
-
-    # It's nice if we can achieve the gpt pass, so if we're not losing too much, cut-off the n_images to just match what we're allowed to give to gpt:
-    if (len(images) > MAX_GPT_PROMPTS) and (len(images) < MAX_GPT_PROMPTS*1.25):
-        images = images[:MAX_GPT_PROMPTS-1]
-        captions = captions[:MAX_GPT_PROMPTS-1]
-
-    # captions
-    print(f"Generating {len(images)} captions using mode: {concept_mode}...")
-    captions, trigger_text, gpt_concept_name = blip_captioning_dataset(
-        images, captions, concept_mode, text=caption_text, substitution_tokens=substitution_tokens
-    )
-    
-    if (gpt_concept_name is not None) and ((mask_target_prompts is None) or (mask_target_prompts == "")):
-        print(f"Using GPT concept name as CLIP-segmentation prompt: {gpt_concept_name}")
-        mask_target_prompts = gpt_concept_name
-
-    if mask_target_prompts is None:
-        print("Disabling CLIP-segmentation")
-        mask_target_prompts = ""
-        temp = 999
-
-    print(f"Generating {len(images)} masks...")
-    if not use_face_detection_instead: # TODO make this faster when no prompt is given
-        seg_masks = clipseg_mask_generator(
-            images=images, target_prompts=mask_target_prompts, temp=temp
-        )
-    else:
-        mask_target_prompts = "FACE detection was used"
-        if add_lr_flips:
-            print("WARNING you are applying face detection while also doing left-right flips, this might not be what you intended?")
-        seg_masks = face_mask_google_mediapipe(images=images)
-
-    print("Masks generated! Cropping images to center of mass...")
-    # find the center of mass of the mask
-    if crop_based_on_salience:
-        coms = [_center_of_mass(mask) for mask in seg_masks]
-    else:
-        coms = [(image.size[0] / 2, image.size[1] / 2) for image in images]
-        
-    # based on the center of mass, crop the image to a square
-    print("Cropping squares...")
-    images = [
-        _crop_to_square(image, com, resize_to=None) 
-        for image, com in zip(images, coms)
-    ]
-
-    seg_masks = [
-        _crop_to_square(mask, com, resize_to=target_size) 
-        for mask, com in zip(seg_masks, coms)
-    ]
-
-    print("Resizing images to training size...")
-    images = [
-        image.resize((target_size, target_size), Image.Resampling.LANCZOS)
-        for image in images
-    ]
-
-    data = []
-    # clean TEMP_OUT_DIR first
-    if os.path.exists(output_dir):
-        for file in os.listdir(output_dir):
-            os.remove(os.path.join(output_dir, file))
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    # iterate through the images, masks, and captions and add a row to the dataframe for each
-    print("Saving final training dataset...")
-    for idx, (image, mask, caption) in enumerate(zip(images, seg_masks, captions)):
-
-        image_name = f"{idx}.src.jpg"
-        mask_file = f"{idx}.mask.jpg"
-        # save the image and mask files
-        image.save(os.path.join(output_dir, image_name), quality=95)
-        mask.save(os.path.join(output_dir, mask_file), quality=95)
-
-        # add a new row to the dataframe with the file names and caption
-        data.append(
-            {"image_path": image_name, "mask_path": mask_file, "caption": caption},
-        )
-
-    df = pd.DataFrame(columns=["image_path", "mask_path", "caption"], data=data)
-    # save the dataframe to a CSV file
-    df.to_csv(os.path.join(output_dir, "captions.csv"), index=False)
-    print("---> Training data 100% ready to go!")
-
-    return n_training_imgs, trigger_text, mask_target_prompts, captions
-
-
-def _find_files(pattern, dir="."):
-    """Return list of files matching pattern in a given directory, in absolute format.
-    Unlike glob, this is case-insensitive.
-    """
-
-    rule = re.compile(fnmatch.translate(pattern), re.IGNORECASE)
-    return [os.path.join(dir, f) for f in os.listdir(dir) if rule.match(f)]

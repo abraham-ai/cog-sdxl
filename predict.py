@@ -134,6 +134,10 @@ class Predictor(BasePredictor):
             description="Add left-right flipped version of each img to the training data, recommended for most cases. If you are learning a face, you prob want to disable this",
             default=True,
         ),
+        augment_imgs_up_to_n: int = Input(
+            description="Apply data augmentation until there are n training samples (0 disables augmentation)",
+            default=0,
+        ),
         mask_target_prompts: str = Input(
             description="Prompt that describes most important part of the image, will be used for CLIP-segmentation. For example, if you are learning a person 'face' would be a good segmentation prompt",
             default=None,
@@ -221,8 +225,12 @@ class Predictor(BasePredictor):
             use_face_detection_instead=use_face_detection_instead,
             temp=clipseg_temperature,
             substitution_tokens=list(token_dict.keys()),
-            left_right_flip_augmentation=left_right_flip_augmentation
+            left_right_flip_augmentation=left_right_flip_augmentation,
+            augment_imgs_up_to_n = augment_imgs_up_to_n,
         )
+
+        # Make sure we've correctly inserted the TOK into every caption:
+        captions = ["TOK, " + caption if "TOK" not in caption else caption for caption in captions]
 
         # Make a dict of all the arguments and save it to args.json: 
         args_dict = {
@@ -250,6 +258,7 @@ class Predictor(BasePredictor):
             "use_face_detection_instead": use_face_detection_instead,
             "clipseg_temperature": clipseg_temperature,
             "left_right_flip_augmentation": left_right_flip_augmentation,
+            "augment_imgs_up_to_n": augment_imgs_up_to_n,
             "checkpointing_steps": checkpointing_steps,
             "run_name": run_name,
             "hard_pivot": hard_pivot,

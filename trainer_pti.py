@@ -699,15 +699,13 @@ def main(
 
             progress_bar.update(1)
             progress_bar.set_description(f"# PTI :step: {global_step}, epoch: {epoch}")
-            progress_bar.refresh()
-            sys.stdout.flush()
+            #progress_bar.refresh()
 
             if global_step % 200 == 0 and debug and False:
                 plot_torch_hist(unet_lora_parameters, global_step, checkpoint_dir, "lora_weights", bins=100, min_val=-0.5, max_val=0.5, ymax_f = 0.07)
                 plot_torch_hist(embedding_handler.get_trainable_embeddings(), global_step, checkpoint_dir, "embeddings_weights", bins=100, min_val=-0.05, max_val=0.05, ymax_f = 0.05)
 
             global_step += 1
-
             (tok1, tok2), vae_latent, mask = batch
             vae_latent = vae_latent.to(weight_dtype)
 
@@ -757,7 +755,6 @@ def main(
 
             noise_sigma = 0.0
             if noise_sigma > 0.0: # apply random noise to the conditioning vectors:
-                #prompt_embeds_shape = [2,77,2048]
                 prompt_embeds[0,1:-2,:] += torch.randn_like(prompt_embeds[0,1:-2,:]) * noise_sigma
 
             # Predict the noise residual
@@ -776,8 +773,7 @@ def main(
                 # Compute normalized L1 norm (mean of abs sum) of all lora parameters:
                 l1_norm = sum(p.abs().sum() for p in unet_lora_parameters) / total_n_lora_params
                 loss = loss + sparsity_lambda * l1_norm
-
-            #print(f"Train loss: {loss.item():.3f}, current Prodigy lr: {optimizer_prod.param_groups[0]['lr']:.6f}")            
+         
             losses.append(loss.item())
             loss.backward()
 
@@ -800,12 +796,13 @@ def main(
             lora_lrs.append(get_avg_lr(optimizer_prod))
 
             # Save intermediate results:
-            output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
             if (global_step == 25) and debug: # visualize the initial token embeddings
+                output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names, n_imgs=1)
 
             # Print some statistics:
             if (global_step % checkpointing_steps == 0) and (global_step > 0):
+                output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
                 plot_loss(losses, save_path=f'{output_dir}/losses.png')
                 plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
