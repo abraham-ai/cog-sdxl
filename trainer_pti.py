@@ -335,7 +335,7 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.8, n_imgs
     gc.collect()
     torch.cuda.empty_cache()
 
-def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names, make_images = True):
+def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names, n_imgs = 4):
     """
     Save the LORA model to output_dir, optionally with some example images
 
@@ -362,7 +362,7 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
     with open(f"{output_dir}/training_args.json", "w") as f:
         json.dump(args_dict, f, indent=4)
 
-    if make_images:
+    if n_imgs > 0:
         render_images(f"{output_dir}", global_step, seed, is_lora)
 
 
@@ -387,8 +387,9 @@ def main(
     unet_learning_rate: float = 1.0,
     ti_lr: float = 3e-4,
     lora_lr: float = 1.0,
-    lora_weight_decay: float = 1e-4,
-    ti_weight_decay: float = 0.0,
+    prodigy_d_coef: float = 0.33,
+    lora_weight_decay: float = 0.005,
+    ti_weight_decay: float = 0.001,
     scale_lr: bool = False,
     lr_scheduler: str = "constant",
     lr_warmup_steps: int = 500,
@@ -497,7 +498,7 @@ def main(
             {
                 "params": unet_param_to_optimize,
                 "lr": unet_learning_rate,
-                "weight_decay": 0.005,
+                "weight_decay": lora_weight_decay,
             },
         ]
 
@@ -548,7 +549,7 @@ def main(
             {
                 "params": unet_lora_parameters,
                 "lr": 1.0,
-                "weight_decay": 0.005,
+                "weight_decay": lora_weight_decay,
             },
         ]
     
@@ -569,19 +570,19 @@ def main(
         # Note: the specific settings of Prodigy seem to matter A LOT
         optimizer_prod = prodigyopt.Prodigy(
                         params_to_optimize_prodigy,
-                        d_coef = 0.33,
+                        d_coef = prodigy_d_coef,
                         lr=1.0,
                         decouple=True,
                         use_bias_correction=True,
                         safeguard_warmup=True,
-                        weight_decay=0.005,
+                        weight_decay=lora_weight_decay,
                         betas=(0.9, 0.99),
                         growth_rate=1.02,  # this slows down the lr_rampup
                     )
         
         optimizer = torch.optim.AdamW(
             params_to_optimize,
-            weight_decay=0.001, # this wd doesn't matter, I think
+            weight_decay=ti_weight_decay,
         )
 
     print(f"# PTI : Loading dataset, do_cache {do_cache}")
@@ -788,11 +789,10 @@ def main(
 
             lora_lrs.append(get_avg_lr(optimizer_prod))
 
-
             # Save intermediate results:
             output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
-            if (global_step == 50) and debug: # mostly to visualize the initial token embeddings after a small amount of gradient steps
-                save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
+            if (global_step == 25) and debug: # visualize the initial token embeddings
+                save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names, n_imgs=1)
 
             # Print some statistics:
             if (global_step % checkpointing_steps == 0) and (global_step > 0):

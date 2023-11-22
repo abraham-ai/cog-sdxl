@@ -90,6 +90,10 @@ class Predictor(BasePredictor):
             description="Whether to use LoRA training. If set to False, will use Full fine tuning",
             default=True,
         ),
+        prodigy_d_coef: float = Input(
+            description="Multiplier for internal learning rate of Prodigy optimizer",
+            default=0.33,
+        ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
             default=2e-3,
@@ -97,6 +101,10 @@ class Predictor(BasePredictor):
         ti_weight_decay: float = Input(
             description="weight decay for textual inversion embeddings. Don't alter unless you know what you're doing.",
             default=1e-4,
+        ),
+        lora_weight_decay: float = Input(
+            description="weight decay for lora parameters. Don't alter unless you know what you're doing.",
+            default=0.005,
         ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 5 is good, for complex concepts / styles you can try 8 or 12",
@@ -227,8 +235,10 @@ class Predictor(BasePredictor):
             "num_train_epochs": num_train_epochs,
             "max_train_steps": max_train_steps,
             "is_lora": is_lora,
+            "prodigy_d_coef": prodigy_d_coef,
             "ti_lr": ti_lr,
             "ti_weight_decay": ti_weight_decay,
+            "lora_weight_decay": lora_weight_decay,
             "lora_rank": lora_rank,
             "lr_scheduler": lr_scheduler,
             "lr_warmup_steps": lr_warmup_steps,
@@ -259,8 +269,10 @@ class Predictor(BasePredictor):
             num_train_epochs=num_train_epochs,
             max_train_steps=max_train_steps,
             gradient_accumulation_steps=1,
+            prodigy_d_coef=prodigy_d_coef,
             ti_lr=ti_lr,
             ti_weight_decay=ti_weight_decay,
+            lora_weight_decay=lora_weight_decay,
             lr_scheduler=lr_scheduler,
             lr_warmup_steps=lr_warmup_steps,
             token_dict=token_dict,
