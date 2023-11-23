@@ -402,7 +402,7 @@ def main(
     ti_weight_decay: float = 0.001,
     scale_lr: bool = False,
     lr_scheduler: str = "constant",
-    lr_warmup_steps: int = 500,
+    lr_warmup_steps: int = 50,
     lr_num_cycles: int = 1,
     lr_power: float = 1.0,
     dataloader_num_workers: int = 0,

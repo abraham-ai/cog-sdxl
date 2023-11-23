@@ -558,7 +558,7 @@ class TokenEmbeddingsHandler:
             )
             off_ratio = std_token_embedding / new_embeddings.std()
 
-            if off_ratio < 0.95:
+            if off_ratio < 0.925:
                 print(f"std-off ratio (avg-std / embedding-std) = {off_ratio:.6f}, this is prob not great..")
 
             new_embeddings = new_embeddings * (off_ratio**off_ratio_power)

@@ -53,18 +53,13 @@ class Predictor(BasePredictor):
             description=" 'face' / 'style' / 'object' (default)",
             default="object",
         ),
-        checkpoint: str = Input(
-            description="Which Stable Diffusion checkpoint to use",
-            choices=['sdxl-v1.0'],
-            default="sdxl-v1.0"
-        ),
         seed: int = Input(
             description="Random seed for reproducible training. Leave empty to use a random seed",
             default=None,
         ),
         resolution: int = Input(
             description="Square pixel resolution which your images will be resized to for training recommended [768-1024]",
-            default=960,
+            default=1024,
         ),
         train_batch_size: int = Input(
             description="Batch size (per device) for training",
@@ -92,7 +87,7 @@ class Predictor(BasePredictor):
         ),
         prodigy_d_coef: float = Input(
             description="Multiplier for internal learning rate of Prodigy optimizer",
-            default=0.33,
+            default=0.5,
         ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
@@ -108,24 +103,8 @@ class Predictor(BasePredictor):
         ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 5 is good, for complex concepts / styles you can try 8 or 12",
-            default=5,
+            default=6,
         ),
-        lr_scheduler: str = Input(
-            description="Learning rate scheduler to use for training",
-            default="constant",
-            choices=[
-                "constant",
-                "linear",
-            ],
-        ),
-        lr_warmup_steps: int = Input(
-            description="Number of warmup steps for lr schedulers with warmups.",
-            default=50,
-        ),
-        # token_map: str = Input(
-        #     description="String of token and their impact size specificing tokens used in the dataset. This will be in format of `token1:size1,token2:size2,...`.",
-        #     default="TOK:2",
-        # ),
         caption_prefix: str = Input(
             description="Prefix text prepended to automatic captioning. Must contain the 'TOK'. Example is 'a photo of TOK, '.  If empty, chatgpt will take care of this automatically",
             default="",
@@ -136,7 +115,7 @@ class Predictor(BasePredictor):
         ),
         augment_imgs_up_to_n: int = Input(
             description="Apply data augmentation until there are n training samples (0 disables augmentation completely)",
-            default=6,
+            default=8,
         ),
         mask_target_prompts: str = Input(
             description="Prompt that describes most important part of the image, will be used for CLIP-segmentation. For example, if you are learning a person 'face' would be a good segmentation prompt",
@@ -152,7 +131,7 @@ class Predictor(BasePredictor):
         ),
         clipseg_temperature: float = Input(
             description="How blurry you want the CLIPSeg mask to be. We recommend this value be something between `0.5` to `1.0`. If you want to have more sharp mask (but thus more errorful), you can decrease this value.",
-            default=1.0,
+            default=0.75,
         ),
         verbose: bool = Input(description="verbose output", default=True),
         run_name: str = Input(
@@ -172,13 +151,8 @@ class Predictor(BasePredictor):
             default=0.1,
         ),
 
-
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
         out_root_dir = "lora_models"
-
-        if checkpoint != "sdxl-v1.0":
-            raise ValueError("Only sdxl-v1.0 is supported for now")
-
 
         if concept_mode == "face":
             mask_target_prompts = "face"
@@ -249,8 +223,6 @@ class Predictor(BasePredictor):
             "ti_weight_decay": ti_weight_decay,
             "lora_weight_decay": lora_weight_decay,
             "lora_rank": lora_rank,
-            "lr_scheduler": lr_scheduler,
-            "lr_warmup_steps": lr_warmup_steps,
             "token_string": token_string,
             "trigger_text": trigger_text,
             "segmentation_prompt": segmentation_prompt,
@@ -283,8 +255,6 @@ class Predictor(BasePredictor):
             ti_lr=ti_lr,
             ti_weight_decay=ti_weight_decay,
             lora_weight_decay=lora_weight_decay,
-            lr_scheduler=lr_scheduler,
-            lr_warmup_steps=lr_warmup_steps,
             token_dict=token_dict,
             inserting_list_tokens=all_token_lists,
             verbose=verbose,
