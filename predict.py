@@ -135,8 +135,8 @@ class Predictor(BasePredictor):
             default=True,
         ),
         augment_imgs_up_to_n: int = Input(
-            description="Apply data augmentation until there are n training samples (0 disables augmentation)",
-            default=0,
+            description="Apply data augmentation until there are n training samples (0 disables augmentation completely)",
+            default=6,
         ),
         mask_target_prompts: str = Input(
             description="Prompt that describes most important part of the image, will be used for CLIP-segmentation. For example, if you are learning a person 'face' would be a good segmentation prompt",

@@ -321,7 +321,7 @@ def cleanup_prompts_with_chatgpt(
     final_chatgpt_prompt = chat_gpt_prompt_1 + "\n- " + "\n- ".join(prompts) + "\n\n" + chat_gpt_prompt_2
     print("Final chatgpt prompt:")
     print(final_chatgpt_prompt)
-    print("---------------------------")
+    print("--------------------------")
     print("Calling chatgpt...")
 
     response = client.chat.completions.create(
@@ -334,7 +334,9 @@ def cleanup_prompts_with_chatgpt(
     gpt_completion = response.choices[0].message.content
 
     if verbose: # pretty print the full response json:
+        print("----- GPT response: -----")
         print(gpt_completion)
+        print("--------------------------")
     
     # extract the final rephrased prompts from the response:
     prompts = []
@@ -430,12 +432,12 @@ def blip_captioning_dataset(
 
     if len(captions) > 3 and len(captions) < MAX_GPT_PROMPTS and not text:
         retry_count = 0
-        while retry_count < 3:
+        while retry_count < 4:
             try:
                 gpt_captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode)
                 n_toks = sum("TOK" in caption for caption in gpt_captions)
                 
-                if n_toks > int(0.8 * len(captions)):
+                if n_toks > int(0.8 * len(captions)) and (len(gpt_captions) == len(captions)):
                     # Ensure every caption contains "TOK"
                     gpt_captions = ["TOK, " + caption if "TOK" not in caption else caption for caption in gpt_captions]
                     captions = gpt_captions
