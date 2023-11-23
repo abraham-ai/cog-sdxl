@@ -114,7 +114,7 @@ class Predictor(BasePredictor):
             default=True,
         ),
         augment_imgs_up_to_n: int = Input(
-            description="Apply data augmentation until there are n training samples (0 disables augmentation completely)",
+            description="Apply data augmentation (no lr-flipping) until there are n training samples (0 disables augmentation completely)",
             default=15,
         ),
         mask_target_prompts: str = Input(
@@ -148,7 +148,7 @@ class Predictor(BasePredictor):
         ),
         off_ratio_power: float = Input(
             description="How strongly to correct the embedding std vs the avg-std (0=off, 0.05=weak, 0.1=standard)",
-            default=0.1,
+            default=0.125,
         ),
 
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
@@ -236,7 +236,7 @@ class Predictor(BasePredictor):
             "run_name": run_name,
             "hard_pivot": hard_pivot,
             "off_ratio_power": off_ratio_power,
-            "trainig_captions": captions,
+            "trainig_captions": captions[:50], # avoid sending back too many captions
         }
 
         with open(os.path.join(output_dir, "training_args.json"), "w") as f:
@@ -291,4 +291,6 @@ class Predictor(BasePredictor):
         if DEBUG_MODE or debug:
             yield Path(out_path)
         else:
+            # clear the output_directory to avoid running out of space on the machine:
+            shutil.rmtree(output_dir)
             yield CogOutput(files=[Path(out_path)], name=name, thumbnails=[Path(validation_grid_img_path)], attributes=args_dict, isFinal=True, progress=1.0)

@@ -44,21 +44,16 @@ run_name             = "xander"
 caption_prefix       = ""  # "" to activate chatgpt
 mask_target_prompts  = ""  # "" to activate chatgpt
 n_exp                = 300  # how many random experiment settings to generate
-min_hamming_distance = 3   # min_n_params that have to be different from any previous experiment to be scheduled
+min_hamming_distance = 1   # min_n_params that have to be different from any previous experiment to be scheduled
 
 # Define training hyperparameters and their possible values
 # The params are sampled stochastically, so if you want to use a specific value more often, just put it in multiple times
 
-if 1:
+if 0:
     hyperparameters = {
         'lora_training_urls': [
-            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/verdelis.zip",
-            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny_all.zip",
-            #"https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny_small.zip",
-            #"https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny_best.zip",
-            #"https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny1.zip",
-            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/chinaman.zip",
-            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/plantoid_imgs_9.zip"
+            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/does.zip",
+            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/clipx_200.zip",
                                 ],
         'concept_mode': ['object'],
         'left_right_flip_augmentation': ['True', 'False'],
@@ -81,14 +76,16 @@ else:
         'lora_training_urls': [
             "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_2.zip",
             "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_5.zip",
+            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/steel.zip",
+            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/egon.zip",
         ],
         'concept_mode': ['face'],
         'left_right_flip_augmentation': ['False'],
-        'augment_imgs_up_to_n': ['0', '30'],
+        'augment_imgs_up_to_n': ['0', '20'],
         'resolution': [1024],
         'hard_pivot': ['False', 'True'],
-        'ti_lr': ['1e-3', '3e-3'],
-        'lora_weight_decay': ['0.001', '0.005'],
+        'ti_lr': ['2e-3'],
+        'lora_weight_decay': ['0.002'],
         'ti_weight_decay': ['1e-4'],
         'lora_rank': ['6'],
         'checkpointing_steps': ['1200'],

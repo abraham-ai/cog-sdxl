@@ -310,7 +310,7 @@ def cleanup_prompts_with_chatgpt(
         Tasks:
         1. Rewrite each description to focus solely on the TOK style.
         2. Integrate "in the style of TOK" naturally into each description, typically at the beginning.
-        3. Streamline each description to its core elements, ensuring clarity and mandatory inclusion of "TOK".
+        3. Summarize each description to its core elements, ensuring clarity and mandatory inclusion of "TOK".
         The descriptions are:
         """
         
@@ -658,23 +658,10 @@ def load_and_save_masks_and_captions(
     n_captions      = len([c for c in captions if c is not None])
     print(f"Loaded {n_training_imgs} images, {n_captions} of which have captions.")
 
-    upscale_images = len(images) < 50 # otherwise this will take a long time...
-
-    if upscale_images: # upscale images that are smaller than target_size:
-        upscale_margin = 1.25
-        images_to_upscale = []
-        indices_to_replace = []
-        for idx, image in enumerate(images):
-            width, height = image.size
-            if width < target_size*upscale_margin or height < target_size*upscale_margin:
-                images_to_upscale.append(image)
-                indices_to_replace.append(idx)
-                
-        print(f"Upscaling {len(images_to_upscale)} of {len(images)} images...")
-        upscaled_images = swin_ir_sr(images_to_upscale, target_size=(int(target_size*upscale_margin), int(target_size*upscale_margin)))
-        
-        for i, idx in enumerate(indices_to_replace):
-            images[idx] = upscaled_images[i]
+    if len(images) < 50: # upscale images that are smaller than target_size:
+        print("upscaling imgs..")
+        upscale_margin = 0.75
+        images = swin_ir_sr(images, target_size=(int(target_size*upscale_margin), int(target_size*upscale_margin)))
 
     if add_lr_flips and len(images) < 40:
         print(f"Adding LR flips... (doubling the number of images from {n_training_imgs} to {n_training_imgs*2})")
