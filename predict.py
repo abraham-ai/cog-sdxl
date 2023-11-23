@@ -91,7 +91,7 @@ class Predictor(BasePredictor):
         ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
-            default=2e-3,
+            default=3e-3,
         ),
         ti_weight_decay: float = Input(
             description="weight decay for textual inversion embeddings. Don't alter unless you know what you're doing.",
@@ -99,7 +99,7 @@ class Predictor(BasePredictor):
         ),
         lora_weight_decay: float = Input(
             description="weight decay for lora parameters. Don't alter unless you know what you're doing.",
-            default=0.005,
+            default=0.002,
         ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 5 is good, for complex concepts / styles you can try 8 or 12",
@@ -115,7 +115,7 @@ class Predictor(BasePredictor):
         ),
         augment_imgs_up_to_n: int = Input(
             description="Apply data augmentation until there are n training samples (0 disables augmentation completely)",
-            default=8,
+            default=15,
         ),
         mask_target_prompts: str = Input(
             description="Prompt that describes most important part of the image, will be used for CLIP-segmentation. For example, if you are learning a person 'face' would be a good segmentation prompt",
