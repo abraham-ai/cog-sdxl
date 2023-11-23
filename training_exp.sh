@@ -1,14 +1,14 @@
 cog predict \
-    -i run_name="xander_xander_2.zip_015_8750" -i caption_prefix="" \
+    -i run_name="tristan" -i caption_prefix="" \
     -i mask_target_prompts="" \
-    -i augment_imgs_up_to_n="30" \
+    -i augment_imgs_up_to_n="20" \
     -i clipseg_temperature=0.5 \
     -i checkpointing_steps="1200" \
-    -i concept_mode="style" \
+    -i concept_mode="object" \
     -i debug="True" \
-    -i left_right_flip_augmentation="False" \
+    -i left_right_flip_augmentation="True" \
     -i lora_rank="6" \
-    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/jmillstyles.zip" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/tristan.zip" \
     -i max_train_steps="1200" \
     -i prodigy_d_coef="0.5" \
     -i resolution=1024 \

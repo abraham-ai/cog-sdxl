@@ -292,5 +292,5 @@ class Predictor(BasePredictor):
             yield Path(out_path)
         else:
             # clear the output_directory to avoid running out of space on the machine:
-            shutil.rmtree(output_dir)
+            #shutil.rmtree(output_dir)
             yield CogOutput(files=[Path(out_path)], name=name, thumbnails=[Path(validation_grid_img_path)], attributes=args_dict, isFinal=True, progress=1.0)
