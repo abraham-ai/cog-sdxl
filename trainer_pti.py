@@ -295,7 +295,13 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.8, n_imgs
 
     else:
         validation_prompts = [
-                'a statue of <concept>',
+                "<concept> captured in a snow globe, complete with intricate details",
+                "<concept> as a retro holographic sticker, shimmering in bright colors",
+                "a photo of <concept> climbing mount Everest in the snow, alpinism",
+                "a painting of <concept> by Vincent van Gogh",
+                "a photo of <concept> surfing a wave in Hawai",
+                "<concept> as an action figure superhero, lego toy, toy story",
+                'a photo of a massive statue of <concept> in the middle of the city',
                 'a masterful oil painting portraying <concept> with vibrant colors, brushstrokes and textures',
                 'an origami paper sculpture of <concept>',
                 'a vibrant low-poly artwork of <concept>, rendered in SVG, vector graphics',
@@ -807,7 +813,6 @@ def main(
                 plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
                 last_save_step = global_step
-
 
     # final_save
     if (global_step - last_save_step) > 101:

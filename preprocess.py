@@ -273,7 +273,7 @@ def cleanup_prompts_with_chatgpt(
             1. Find a good, short name/description of the single central concept that's in all the images. This [Concept Name]  might eg already be present in the descriptions above, pick the most obvious name or words that would fit in all descriptions.
             2. Insert the text "TOK, [Concept Name]" into all the descriptions above by rephrasing them where needed to naturally contain the text TOK, [Concept Name] while keeping as much of the description as possible.
 
-            Reply by first stating the "Concept Name:", followed by an enumerated list (using "-") of the revised "Descriptions:".
+            Reply by first stating the "Concept Name:", followed by an enumerated list (using "-") of all the revised "Descriptions:".
             """
 
     if concept_mode == "object":
@@ -287,7 +287,7 @@ def cleanup_prompts_with_chatgpt(
         """
         
         chat_gpt_prompt_2 = """
-        Respond with the chosen "Concept Name:" followed by a list (using "-") of the revised descriptions, each mentioning "TOK".
+        Respond with the chosen "Concept Name:" followed by a list (using "-") of all the revised descriptions, each mentioning "TOK".
         """
 
     elif concept_mode == "face":
@@ -301,7 +301,7 @@ def cleanup_prompts_with_chatgpt(
         """
         
         chat_gpt_prompt_2 = """
-        Respond with "Concept Name: TOK" followed by a list (using "-") of the revised descriptions, each mentioning "a photo of TOK".
+        Respond with "Concept Name: TOK" followed by a list (using "-") of all the revised descriptions, each mentioning "a photo of TOK".
         """
 
     elif concept_mode == "style":
@@ -315,7 +315,7 @@ def cleanup_prompts_with_chatgpt(
         """
         
         chat_gpt_prompt_2 = """
-        Respond with "Style Name: TOK" followed by a list (using "-") of the revised descriptions, each mentioning "in the style of TOK".
+        Respond with "Style Name: TOK" followed by a list (using "-") of all the revised descriptions, each mentioning "in the style of TOK".
         """
 
     final_chatgpt_prompt = chat_gpt_prompt_1 + "\n- " + "\n- ".join(prompts) + "\n\n" + chat_gpt_prompt_2
@@ -376,59 +376,10 @@ def extract_gpt_concept_name(gpt_completion, concept_mode):
     return concept_name
 
 
+def post_process_captions(captions, text, concept_mode):
 
-
-@torch.no_grad()
-def blip_captioning_dataset(
-    images: List[Image.Image],
-    input_captions: List[str],
-    concept_mode: str,  # face / object / style
-    text: Optional[str] = None,  # caption_prefix="a cartoon of TOK, the yellow bananaman figure, " 
-    model_id: Literal[
-        "Salesforce/blip-image-captioning-large",
-        "Salesforce/blip-image-captioning-base",
-        "Salesforce/blip2-opt-2.7b",
-    ] = "Salesforce/blip-image-captioning-large",
-    device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-    substitution_tokens: Optional[List[str]] = None,
-    n_samples_per_img: int = 1,
-    **kwargs,
-) -> List[str]:
-    """
-    Returns a list of captions for the given images
-    TODO, try BLIP2: https://huggingface.co/docs/transformers/main/model_doc/blip-2#transformers.Blip2ForConditionalGeneration.forward.example-2
-    """
-
-    if "blip2" in model_id:
-        processor = Blip2Processor.from_pretrained(model_id, cache_dir=MODEL_PATH)
-        model = Blip2ForConditionalGeneration.from_pretrained(
-            model_id, cache_dir=MODEL_PATH, torch_dtype=torch.float16
-        ).to(device)
-    else:
-        processor = BlipProcessor.from_pretrained(model_id, cache_dir=MODEL_PATH)
-        model = BlipForConditionalGeneration.from_pretrained(
-            model_id, cache_dir=MODEL_PATH, torch_dtype=torch.float16
-        ).to(device)
-
-    captions = []
     text = text.strip()
-
     print(f"Input captioning text: {text}")
-    print("Substitution tokens:", substitution_tokens)
-
-    for i, image in enumerate(tqdm(images)):
-        if input_captions[i] is None:
-            inputs = processor(image, return_tensors="pt").to(device, torch.float16)
-            out = model.generate(**inputs, max_length=100, do_sample=True, top_k=40, temperature=0.65)
-            caption = processor.decode(out[0], skip_special_tokens=True)
-            # BLIP 2 lowercases all caps tokens. This should properly replace them w/o messing up subwords.
-            for token in substitution_tokens:
-                caption = caption.replace(f" {token.lower()} ", f" {token} ")
-        else:
-            caption = input_captions[i]
-
-        print(caption)
-        captions.append(caption)
 
     if len(captions) > 3 and len(captions) < MAX_GPT_PROMPTS and not text:
         retry_count = 0
@@ -466,8 +417,55 @@ def blip_captioning_dataset(
         gpt_concept_name = None
 
     captions = [fix_prompt(caption) for caption in captions]
-
     return captions, trigger_text, gpt_concept_name
+
+
+
+@torch.no_grad()
+def blip_captioning_dataset(
+    images: List[Image.Image],
+    input_captions: List[str],
+    model_id: Literal[
+        "Salesforce/blip-image-captioning-large",
+        "Salesforce/blip-image-captioning-base",
+        "Salesforce/blip2-opt-2.7b",
+    ] = "Salesforce/blip-image-captioning-large",
+    device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+    substitution_tokens: Optional[List[str]] = None,
+    n_samples_per_img: int = 1,
+    **kwargs,
+) -> List[str]:
+    """
+    Returns a list of captions for the given images
+    TODO, try BLIP2: https://huggingface.co/docs/transformers/main/model_doc/blip-2#transformers.Blip2ForConditionalGeneration.forward.example-2
+    """
+
+    if "blip2" in model_id:
+        processor = Blip2Processor.from_pretrained(model_id, cache_dir=MODEL_PATH)
+        model = Blip2ForConditionalGeneration.from_pretrained(
+            model_id, cache_dir=MODEL_PATH, torch_dtype=torch.float16
+        ).to(device)
+    else:
+        processor = BlipProcessor.from_pretrained(model_id, cache_dir=MODEL_PATH)
+        model = BlipForConditionalGeneration.from_pretrained(
+            model_id, cache_dir=MODEL_PATH, torch_dtype=torch.float16
+        ).to(device)
+
+    captions = []
+
+    for i, image in enumerate(tqdm(images)):
+        if input_captions[i] is None:
+            inputs = processor(image, return_tensors="pt").to(device, torch.float16)
+            out = model.generate(**inputs, max_length=100, do_sample=True, top_k=40, temperature=0.65)
+            caption = processor.decode(out[0], skip_special_tokens=True)
+            # BLIP 2 lowercases all caps tokens. This should properly replace them w/o messing up subwords.
+            for token in substitution_tokens:
+                caption = caption.replace(f" {token.lower()} ", f" {token} ")
+        else:
+            caption = input_captions[i]
+        captions.append(caption)
+
+    return captions
 
 
 
@@ -688,11 +686,12 @@ def load_and_save_masks_and_captions(
         images = images[:MAX_GPT_PROMPTS-1]
         captions = captions[:MAX_GPT_PROMPTS-1]
 
-    # captions
+    # Use BLIP for autocaptioning:
     print(f"Generating {len(images)} captions using mode: {concept_mode}...")
-    captions, trigger_text, gpt_concept_name = blip_captioning_dataset(
-        images, captions, concept_mode, text=caption_text, substitution_tokens=substitution_tokens
-    )
+    captions = blip_captioning_dataset(images, captions,  substitution_tokens=substitution_tokens)
+
+    # Cleanup prompts using chatgpt:
+    captions, trigger_text, gpt_concept_name = post_process_captions(captions, caption_text, concept_mode)
 
     aug_imgs, aug_caps = [],[]
     while len(images) + len(aug_imgs) < augment_imgs_up_to_n: # if we still have a very small amount of imgs, do some basic augmentation:

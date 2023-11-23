@@ -212,6 +212,7 @@ class Predictor(BasePredictor):
             "concept_mode": concept_mode,
             "input_images": str(lora_training_urls),
             "num_training_images": n_imgs,
+            "num_augmented_images": len(captions),
             "seed": seed,
             "resolution": resolution,
             "train_batch_size": train_batch_size,

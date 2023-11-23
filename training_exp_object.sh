@@ -158,24 +158,6 @@ cog predict \
     -i ti_weight_decay="1e-4" \
     -i train_batch_size="2"  
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
-
 cog predict \
     -i run_name="object_chinaman.zip_008_8798" -i caption_prefix="" \
     -i mask_target_prompts="" \
