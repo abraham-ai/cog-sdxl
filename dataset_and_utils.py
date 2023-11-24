@@ -277,8 +277,6 @@ def load_models(pretrained_model_name_or_path, revision, device, weight_dtype):
             #"use_karras_sigmas": false,
             variance_type = "fixed_small"
             )
-
-        print(noise_scheduler)
         
         # Extract the submodules from the model:
         vae = pipe.vae

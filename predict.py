@@ -101,10 +101,15 @@ class Predictor(BasePredictor):
             description="weight decay for lora parameters. Don't alter unless you know what you're doing.",
             default=0.002,
         ),
+        l1_penalty: float = Input(
+            description="Sparsity penalty for the LoRA matrices, increases merge-ability and maybe generalization",
+            default=0.1,
+        ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 5 is good, for complex concepts / styles you can try 8 or 12",
-            default=6,
+            default=8,
         ),
+        
         caption_prefix: str = Input(
             description="Prefix text prepended to automatic captioning. Must contain the 'TOK'. Example is 'a photo of TOK, '.  If empty, chatgpt will take care of this automatically",
             default="",
@@ -115,7 +120,7 @@ class Predictor(BasePredictor):
         ),
         augment_imgs_up_to_n: int = Input(
             description="Apply data augmentation (no lr-flipping) until there are n training samples (0 disables augmentation completely)",
-            default=15,
+            default=20,
         ),
         mask_target_prompts: str = Input(
             description="Prompt that describes most important part of the image, will be used for CLIP-segmentation. For example, if you are learning a person 'face' would be a good segmentation prompt",
@@ -156,8 +161,13 @@ class Predictor(BasePredictor):
 
         if concept_mode == "face":
             mask_target_prompts = "face"
+            clipseg_temperature = 0.5
+
         if concept_mode == "concept": # gracefully catch any old versions of concept_mode
             concept_mode = "object"
+
+        if concept_mode == "style":
+            l1_penalty = 0.02
 
         print(f"cog:predict:train_lora:{concept_mode}")
         #print("error %d" %'error')
@@ -223,6 +233,7 @@ class Predictor(BasePredictor):
             "ti_lr": ti_lr,
             "ti_weight_decay": ti_weight_decay,
             "lora_weight_decay": lora_weight_decay,
+            "l1_penalty": l1_penalty,
             "lora_rank": lora_rank,
             "token_string": token_string,
             "trigger_text": trigger_text,
@@ -252,6 +263,7 @@ class Predictor(BasePredictor):
             num_train_epochs=num_train_epochs,
             max_train_steps=max_train_steps,
             gradient_accumulation_steps=1,
+            l1_penalty=l1_penalty,
             prodigy_d_coef=prodigy_d_coef,
             ti_lr=ti_lr,
             ti_weight_decay=ti_weight_decay,

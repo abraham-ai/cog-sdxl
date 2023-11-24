@@ -32,19 +32,21 @@ from safetensors.torch import load_file
 import matplotlib.pyplot as plt
 
 def plot_torch_hist(parameters, epoch, checkpoint_dir, name, bins=100, min_val=-1, max_val=1, ymax_f = 0.75):
-
     # Initialize histogram
     hist_values = torch.zeros(bins).cuda()
 
     n_values = 0
+    sum_values = 0
 
     # Update histogram batch-wise to save memory
     for p in parameters:
         try:
-            hist_values += torch.histc(p.data, bins=bins, min=min_val, max=max_val)
+            hist = torch.histc(p.data, bins=bins)
         except:
-            hist_values += torch.histc(p.float(), bins=bins, min=min_val, max=max_val)
+            hist = torch.histc(p.float(), bins=bins)
+        hist_values += hist
         n_values += p.numel()
+        sum_values += p.data.abs().sum()
 
     # Convert to NumPy and plot
     hist_values_cpu = hist_values.cpu().numpy()
@@ -53,7 +55,7 @@ def plot_torch_hist(parameters, epoch, checkpoint_dir, name, bins=100, min_val=-
     plt.ylim(0, ymax_f * n_values)
     plt.xlabel('Weight Value')
     plt.ylabel('Count')
-    plt.title(f'Epoch {epoch} {name} Histogram')
+    plt.title(f'Epoch {epoch} {name} Histogram (mean = {sum_values / n_values:.3f})')
     plt.savefig(f"{checkpoint_dir}/{name}_histogram_{epoch:04d}.png")
     plt.close()
 
@@ -85,8 +87,9 @@ def plot_loss(losses, save_path='losses.png'):
 def patch_pipe_with_lora(pipe, lora_path):
 
     with open(os.path.join(lora_path, "training_args.json"), "r") as f:
-        training_args = json.load(f)
-        lora_rank     = training_args["lora_rank"]
+        training_args  = json.load(f)
+        lora_rank      = training_args["lora_rank"]
+        prodigy_d_coef = training_args["prodigy_d_coef"]
     
     unet = pipe.unet
     lora_safetensors_path = os.path.join(lora_path, "lora.safetensors")
@@ -94,31 +97,32 @@ def patch_pipe_with_lora(pipe, lora_path):
     if os.path.exists(lora_safetensors_path):
         tensors = load_file(lora_safetensors_path)
         unet_lora_attn_procs = {}
-        for name, attn_processor in unet.attn_processors.items():
-            cross_attention_dim = (
-                None
-                if name.endswith("attn1.processor")
-                else unet.config.cross_attention_dim
-            )
-            if name.startswith("mid_block"):
-                hidden_size = unet.config.block_out_channels[-1]
-            elif name.startswith("up_blocks"):
-                block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(unet.config.block_out_channels))[
-                    block_id
-                ]
-            elif name.startswith("down_blocks"):
-                block_id = int(name[len("down_blocks.")])
-                hidden_size = unet.config.block_out_channels[block_id]
+        if prodigy_d_coef > 0.0:
+            for name, attn_processor in unet.attn_processors.items():
+                cross_attention_dim = (
+                    None
+                    if name.endswith("attn1.processor")
+                    else unet.config.cross_attention_dim
+                )
+                if name.startswith("mid_block"):
+                    hidden_size = unet.config.block_out_channels[-1]
+                elif name.startswith("up_blocks"):
+                    block_id = int(name[len("up_blocks.")])
+                    hidden_size = list(reversed(unet.config.block_out_channels))[
+                        block_id
+                    ]
+                elif name.startswith("down_blocks"):
+                    block_id = int(name[len("down_blocks.")])
+                    hidden_size = unet.config.block_out_channels[block_id]
 
-            module = LoRAAttnProcessor2_0(
-                hidden_size=hidden_size,
-                cross_attention_dim=cross_attention_dim,
-                rank=lora_rank,
-            )
-            unet_lora_attn_procs[name] = module.to("cuda")
+                module = LoRAAttnProcessor2_0(
+                    hidden_size=hidden_size,
+                    cross_attention_dim=cross_attention_dim,
+                    rank=lora_rank,
+                )
+                unet_lora_attn_procs[name] = module.to("cuda")
 
-        unet.set_attn_processor(unet_lora_attn_procs)
+            unet.set_attn_processor(unet_lora_attn_procs)
 
     else:
         unet_path = os.path.join(lora_path, "unet.safetensors")
@@ -149,8 +153,9 @@ def get_avg_lr(optimizer):
         total_lr += effective_lr * num_params
         total_params += num_params
 
-    average_lr = total_lr / total_params
-    return average_lr
+    if total_params == 0:
+        return 0.0
+    else: return total_lr / total_params
 
 
 import re
@@ -260,7 +265,7 @@ def prepare_prompt_for_lora(prompt, lora_path, interpolation=False, verbose=True
 
 
 @torch.no_grad()
-def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.7, n_imgs = 4, device = "cuda:0"):
+def render_images(lora_path, train_step, seed, is_lora, unet_lora_parameters, lora_scale = 0.7, n_imgs = 4, device = "cuda:0"):
 
     random.seed(seed)
 
@@ -333,7 +338,7 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.7, n_imgs
                 "guidance_scale": 7,
                 }
 
-    if is_lora:
+    if is_lora and len(unet_lora_parameters) > 0:
         cross_attention_kwargs = {"scale": lora_scale}
     else:
         cross_attention_kwargs = None
@@ -351,7 +356,7 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.7, n_imgs
     gc.collect()
     torch.cuda.empty_cache()
 
-def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names, n_imgs = 4):
+def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_lora_parameters, unet_param_to_optimize_names, n_imgs = 4):
     """
     Save the LORA model to output_dir, optionally with some example images
 
@@ -360,17 +365,18 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
     os.makedirs(output_dir, exist_ok=True)
 
     if not is_lora:
-        tensors = {
+        lora_tensors = {
             name: param
             for name, param in unet.named_parameters()
             if name in unet_param_to_optimize_names
         }
-        save_file(tensors, f"{output_dir}/unet.safetensors",)
-
-    else:
+        save_file(lora_tensors, f"{output_dir}/unet.safetensors",)
+    elif len(unet_lora_parameters) > 0:
         lora_tensors = unet_attn_processors_state_dict(unet)
-        save_file(lora_tensors, f"{output_dir}/lora.safetensors")
+    else:
+        lora_tensors = {}
 
+    save_file(lora_tensors, f"{output_dir}/lora.safetensors")
     embedding_handler.save_embeddings(f"{output_dir}/embeddings.pti",)
 
     with open(f"{output_dir}/special_params.json", "w") as f:
@@ -379,7 +385,7 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
         json.dump(args_dict, f, indent=4)
 
     if n_imgs > 0:
-        render_images(f"{output_dir}", global_step, seed, is_lora, n_imgs = n_imgs)
+        render_images(f"{output_dir}", global_step, seed, is_lora, unet_lora_parameters, n_imgs = n_imgs)
 
 
 
@@ -404,6 +410,7 @@ def main(
     ti_lr: float = 3e-4,
     lora_lr: float = 1.0,
     prodigy_d_coef: float = 0.33,
+    l1_penalty: float = 0.0,
     lora_weight_decay: float = 0.005,
     ti_weight_decay: float = 0.001,
     scale_lr: bool = False,
@@ -523,31 +530,33 @@ def main(
         # Do lora-training instead.
         unet.requires_grad_(False)
         unet_lora_attn_procs = {}
-        for name, attn_processor in unet.attn_processors.items():
-            cross_attention_dim = (
-                None
-                if name.endswith("attn1.processor")
-                else unet.config.cross_attention_dim
-            )
-            if name.startswith("mid_block"):
-                hidden_size = unet.config.block_out_channels[-1]
-            elif name.startswith("up_blocks"):
-                block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-            elif name.startswith("down_blocks"):
-                block_id = int(name[len("down_blocks.")])
-                hidden_size = unet.config.block_out_channels[block_id]
 
-            module = LoRAAttnProcessor2_0(
-                hidden_size=hidden_size,
-                cross_attention_dim=cross_attention_dim,
-                rank=lora_rank,
-            )
-            unet_lora_attn_procs[name] = module
-            module.to(device)
-            unet_lora_parameters.extend(module.parameters())
+        if prodigy_d_coef > 0.0:
+            for name, attn_processor in unet.attn_processors.items():
+                cross_attention_dim = (
+                    None
+                    if name.endswith("attn1.processor")
+                    else unet.config.cross_attention_dim
+                )
+                if name.startswith("mid_block"):
+                    hidden_size = unet.config.block_out_channels[-1]
+                elif name.startswith("up_blocks"):
+                    block_id = int(name[len("up_blocks.")])
+                    hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
+                elif name.startswith("down_blocks"):
+                    block_id = int(name[len("down_blocks.")])
+                    hidden_size = unet.config.block_out_channels[block_id]
 
-        unet.set_attn_processor(unet_lora_attn_procs)
+                module = LoRAAttnProcessor2_0(
+                    hidden_size=hidden_size,
+                    cross_attention_dim=cross_attention_dim,
+                    rank=lora_rank,
+                )
+                unet_lora_attn_procs[name] = module
+                module.to(device)
+                unet_lora_parameters.extend(module.parameters())
+
+            unet.set_attn_processor(unet_lora_attn_procs)
 
         print("Creating optimizer with:")
         print(f"lora_lr: {lora_lr}, lora_weight_decay: {lora_weight_decay}")
@@ -707,11 +716,6 @@ def main(
             progress_bar.set_description(f"# PTI :step: {global_step}, epoch: {epoch}")
             #progress_bar.refresh()
 
-            if global_step % 200 == 0 and debug and False:
-                plot_torch_hist(unet_lora_parameters, global_step, checkpoint_dir, "lora_weights", bins=100, min_val=-0.5, max_val=0.5, ymax_f = 0.07)
-                plot_torch_hist(embedding_handler.get_trainable_embeddings(), global_step, checkpoint_dir, "embeddings_weights", bins=100, min_val=-0.05, max_val=0.05, ymax_f = 0.05)
-
-            global_step += 1
             (tok1, tok2), vae_latent, mask = batch
             vae_latent = vae_latent.to(weight_dtype)
 
@@ -774,11 +778,15 @@ def main(
             loss = (model_pred - noise).pow(2) * mask
             loss = loss.mean()
 
-            sparsity_lambda = 0.0 # disable L1 norm for now
-            if sparsity_lambda > 0.0:
+            if l1_penalty > 0.0:
                 # Compute normalized L1 norm (mean of abs sum) of all lora parameters:
                 l1_norm = sum(p.abs().sum() for p in unet_lora_parameters) / total_n_lora_params
-                loss = loss + sparsity_lambda * l1_norm
+                #print(f"Loss: {loss.item():.6f}, L1-penalty: {(l1_penalty * l1_norm).item():.6f}")
+                loss = loss + l1_penalty * l1_norm
+
+            if global_step % 300 == 0 and debug and 1:
+                plot_torch_hist(unet_lora_parameters, global_step, checkpoint_dir, "lora_weights", bins=100, min_val=-0.5, max_val=0.3, ymax_f = 0.05)
+                plot_torch_hist(embedding_handler.get_trainable_embeddings(), global_step, checkpoint_dir, "embeddings_weights", bins=100, min_val=-0.05, max_val=0.05, ymax_f = 0.05)
          
             losses.append(loss.item())
             loss.backward()
@@ -802,17 +810,19 @@ def main(
             lora_lrs.append(get_avg_lr(optimizer_prod))
 
             # Save intermediate results:
-            if (global_step == 25) and debug: # visualize the initial token embeddings
+            if (global_step == 25) and debug and 0: # visualize the initial token embeddings
                 output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
-                save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names, n_imgs=1)
+                save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_lora_parameters, unet_param_to_optimize_names, n_imgs=1)
 
             # Print some statistics:
             if (global_step % checkpointing_steps == 0) and (global_step > 0):
                 output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
                 plot_loss(losses, save_path=f'{output_dir}/losses.png')
                 plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
-                save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
+                save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_lora_parameters, unet_param_to_optimize_names)
                 last_save_step = global_step
+            
+            global_step += 1
 
     # final_save
     if (global_step - last_save_step) > 101:
@@ -821,7 +831,7 @@ def main(
         output_save_dir = f"{checkpoint_dir}/checkpoint-{last_save_step}"
 
     if not os.path.exists(output_save_dir):
-        save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_param_to_optimize_names)
+        save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_lora_parameters, unet_param_to_optimize_names)
     else:
         print(f"Skipping final save, {output_save_dir} already exists")
 

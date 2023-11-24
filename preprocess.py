@@ -577,8 +577,8 @@ def random_crop(image, scale=(0.85, 0.95)):
 
     return image.crop((left, top, left + new_width, top + new_height))
 
-def gaussian_blur(image, max_radius=2):
-    return image.filter(ImageFilter.GaussianBlur(radius=random.uniform(1, max_radius)))
+def gaussian_blur(image):
+    return image.filter(ImageFilter.GaussianBlur(radius=1))
 
 def augment_image(image):
     image = hue_augmentation(image)
