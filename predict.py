@@ -3,6 +3,7 @@ import shutil
 import tarfile
 import json
 import time
+import numpy as np
 
 from cog import BasePredictor, BaseModel, File, Input, Path
 from dotenv import load_dotenv
@@ -107,7 +108,7 @@ class Predictor(BasePredictor):
         ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 5 is good, for complex concepts / styles you can try 8 or 12",
-            default=8,
+            default=12,
         ),
         
         caption_prefix: str = Input(
@@ -158,6 +159,8 @@ class Predictor(BasePredictor):
 
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
         out_root_dir = "lora_models"
+        if not seed:
+            seed = np.random.randint(0, 2**32 - 1)
 
         if concept_mode == "face":
             mask_target_prompts = "face"
@@ -166,7 +169,7 @@ class Predictor(BasePredictor):
         if concept_mode == "concept": # gracefully catch any old versions of concept_mode
             concept_mode = "object"
 
-        if concept_mode == "style":
+        if concept_mode == "style": # for styles you usually want the LoRA matrices to absorb a lot (instead of just the token embedding)
             l1_penalty = 0.02
 
         print(f"cog:predict:train_lora:{concept_mode}")

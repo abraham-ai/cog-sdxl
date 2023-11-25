@@ -173,8 +173,14 @@ def unzip_to_folder(zip_path, target_folder, remove_zip = True):
     if remove_zip: # remove the zip file:
         os.remove(zip_path)
 
-def load_image_with_orientation(path, mode = "RGB"):
+def load_image_with_orientation(path, mode="RGB"):
     image = Image.open(path)
+
+    # Save tmp:
+    directory, basename = os.path.dirname(path), os.path.basename(path)
+    base_name, ext = os.path.splitext(basename)
+    save_path = os.path.join(directory, f"{base_name}_pre_orient.jpg")
+    image.save(save_path, quality=95)
 
     # Try to get the Exif orientation tag (0x0112), if it exists
     try:
@@ -188,20 +194,21 @@ def load_image_with_orientation(path, mode = "RGB"):
         if orientation == 2:
             image = image.transpose(Image.FLIP_LEFT_RIGHT)
         elif orientation == 3:
-            image = image.rotate(180)
+            image = image.rotate(180, expand=True)
         elif orientation == 4:
             image = image.transpose(Image.FLIP_TOP_BOTTOM)
         elif orientation == 5:
-            image = image.rotate(-90).transpose(Image.FLIP_LEFT_RIGHT)
+            image = image.rotate(-90, expand=True).transpose(Image.FLIP_LEFT_RIGHT)
         elif orientation == 6:
-            image = image.rotate(-90)
+            image = image.rotate(-90, expand=True)
         elif orientation == 7:
-            image = image.rotate(90).transpose(Image.FLIP_LEFT_RIGHT)
+            image = image.rotate(90, expand=True).transpose(Image.FLIP_LEFT_RIGHT)
         elif orientation == 8:
-            image = image.rotate(90)
+            image = image.rotate(90, expand=True)
 
     return image.convert(mode)
 
+    
 def is_image_or_txt_file(file_path):
     try:
         with Image.open(file_path) as img:
@@ -279,22 +286,23 @@ def prep_img_dir(target_folder):
         print(f"An error occurred while prepping the image directory: {e}")
 
 
-def download_and_prep_training_data(lora_training_urls, data_dir):
+def download_and_prep_training_data(piped_urls, data_dir):
 
-    for lora_url in str(lora_training_urls).split('|'):
-        download(lora_url, data_dir)
+    for url in str(piped_urls).split('|'):
+        download(url, data_dir)
+        
 
     # Loop over all files in the data directory:
     for filename in os.listdir(data_dir):
         filepath = os.path.join(data_dir, filename)
         if is_zip_file(filepath):
             unzip_to_folder(filepath, data_dir, remove_zip=True)
-    
+
     # Prep the image directory:
     prep_img_dir(data_dir)
 
 
 
 if __name__ == '__main__':
-    zip_url = "https://storage.googleapis.com/public-assets-xander/Random/remove/test.zip|https://generations.krea.ai/images/3cd0b8a8-34e5-4647-9217-1dc03a886b6a.webp"
+    zip_url = "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_uncropped.zip"
     download_and_prep_training_data(zip_url, "test_folder")
