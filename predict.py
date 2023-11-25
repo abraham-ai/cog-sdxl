@@ -72,7 +72,7 @@ class Predictor(BasePredictor):
         ),
         max_train_steps: int = Input(
             description="Number of individual training steps. Takes precedence over num_train_epochs",
-            default=1200,
+            default=1000,
         ),
         checkpointing_steps: int = Input(
             description="Number of steps between saving checkpoints. Set to very very high number to disable checkpointing, because you don't need one.",

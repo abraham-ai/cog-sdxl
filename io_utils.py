@@ -176,12 +176,6 @@ def unzip_to_folder(zip_path, target_folder, remove_zip = True):
 def load_image_with_orientation(path, mode="RGB"):
     image = Image.open(path)
 
-    # Save tmp:
-    directory, basename = os.path.dirname(path), os.path.basename(path)
-    base_name, ext = os.path.splitext(basename)
-    save_path = os.path.join(directory, f"{base_name}_pre_orient.jpg")
-    image.save(save_path, quality=95)
-
     # Try to get the Exif orientation tag (0x0112), if it exists
     try:
         exif_data = image._getexif()
@@ -208,7 +202,7 @@ def load_image_with_orientation(path, mode="RGB"):
 
     return image.convert(mode)
 
-    
+
 def is_image_or_txt_file(file_path):
     try:
         with Image.open(file_path) as img:
