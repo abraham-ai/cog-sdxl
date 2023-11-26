@@ -822,7 +822,8 @@ def main(
                 prompt_embeds,
                 added_cond_kwargs=added_kw,
             ).sample
-
+            
+            # Compute the loss:
             if snr_gamma is None:
                 loss = (model_pred - noise).pow(2) * mask
                 loss = loss.mean()

@@ -1,11 +1,11 @@
 
-
 cog predict \
     -i run_name="banny_snr"  \
     -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny_best.zip" \
     -i concept_mode="object" \
     -i left_right_flip_augmentation="True" \
     -i snr_gamma="5.0" \
+    -i checkpointing_steps="200" \
     -i max_train_steps="500" \
     -i lora_rank="12" \
     -i augment_imgs_up_to_n="20" \

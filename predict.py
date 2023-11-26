@@ -11,7 +11,6 @@ from predict_old import SDXL_MODEL_CACHE, SDXL_URL, download_weights
 from preprocess import preprocess
 from trainer_pti import main
 from typing import Iterator, Optional
-os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 DEBUG_MODE = False
 
