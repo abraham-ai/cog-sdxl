@@ -11,6 +11,7 @@ from predict_old import SDXL_MODEL_CACHE, SDXL_URL, download_weights
 from preprocess import preprocess
 from trainer_pti import main
 from typing import Iterator, Optional
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 DEBUG_MODE = False
 
@@ -105,6 +106,10 @@ class Predictor(BasePredictor):
         l1_penalty: float = Input(
             description="Sparsity penalty for the LoRA matrices, increases merge-ability and maybe generalization",
             default=0.1,
+        ),
+        snr_gamma: float = Input(
+            description="see https://arxiv.org/pdf/2303.09556.pdf, set to None to disable snr training",
+            default=None,
         ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 5 is good, for complex concepts / styles you can try 8 or 12",
@@ -238,6 +243,7 @@ class Predictor(BasePredictor):
             "lora_weight_decay": lora_weight_decay,
             "l1_penalty": l1_penalty,
             "lora_rank": lora_rank,
+            "snr_gamma": snr_gamma,
             "token_string": token_string,
             "trigger_text": trigger_text,
             "segmentation_prompt": segmentation_prompt,
@@ -270,6 +276,7 @@ class Predictor(BasePredictor):
             prodigy_d_coef=prodigy_d_coef,
             ti_lr=ti_lr,
             ti_weight_decay=ti_weight_decay,
+            snr_gamma=snr_gamma,
             lora_weight_decay=lora_weight_decay,
             token_dict=token_dict,
             inserting_list_tokens=all_token_lists,

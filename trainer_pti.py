@@ -469,6 +469,7 @@ def main(
     lr_warmup_steps: int = 50,
     lr_num_cycles: int = 1,
     lr_power: float = 1.0,
+    snr_gamma: float = 5.0,
     dataloader_num_workers: int = 0,
     allow_tf32: bool = True,
     mixed_precision: Optional[str] = "bf16",
@@ -510,8 +511,24 @@ def main(
         vae,
         unet,
     ) = load_models(pretrained_model_name_or_path, revision, device, weight_dtype)
-
     print("# PTI : Loaded models")
+
+    train_dataset = PreprocessedDataset(
+        instance_data_dir,
+        tokenizer_one,
+        tokenizer_two,
+        vae.float(),
+        do_cache=True,
+        substitute_caption_map=token_dict,
+    )
+
+    print(f"# PTI : Loaded dataset, do_cache: {do_cache}")
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=train_batch_size,
+        shuffle=True,
+        num_workers=dataloader_num_workers,
+    )
 
     # Initialize new tokens for training.
 
@@ -661,26 +678,6 @@ def main(
             weight_decay=ti_weight_decay,
         )
 
-    print(f"# PTI : Loading dataset, do_cache {do_cache}")
-
-    train_dataset = PreprocessedDataset(
-        instance_data_dir,
-        tokenizer_one,
-        tokenizer_two,
-        vae.float(),
-        do_cache=True,
-        substitute_caption_map=token_dict,
-    )
-
-    print("# PTI : Loaded dataset")
-
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=train_batch_size,
-        shuffle=True,
-        num_workers=dataloader_num_workers,
-    )
-
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / gradient_accumulation_steps
     )
@@ -826,7 +823,6 @@ def main(
                 added_cond_kwargs=added_kw,
             ).sample
 
-            snr_gamma = None
             if snr_gamma is None:
                 loss = (model_pred - noise).pow(2) * mask
                 loss = loss.mean()
