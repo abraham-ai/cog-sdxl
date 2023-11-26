@@ -1,4 +1,3 @@
-
 cog predict \
     -i run_name="banny_snr"  \
     -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/banny_best.zip" \

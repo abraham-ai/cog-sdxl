@@ -16,15 +16,6 @@ DEBUG_MODE = False
 
 load_dotenv()
 
-"""
-
-os.environ["TORCH_HOME"] = "/src/.torch"
-os.environ["TRANSFORMERS_CACHE"] = "/src/.huggingface/"
-os.environ["DIFFUSERS_CACHE"] = "/src/.huggingface/"
-os.environ["HF_HOME"] = "/src/.huggingface/"
-
-"""
-
 class CogOutput(BaseModel):
     files: list[Path]
     name: Optional[str] = None

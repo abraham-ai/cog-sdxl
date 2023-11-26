@@ -511,24 +511,6 @@ def main(
         vae,
         unet,
     ) = load_models(pretrained_model_name_or_path, revision, device, weight_dtype)
-    print("# PTI : Loaded models")
-
-    train_dataset = PreprocessedDataset(
-        instance_data_dir,
-        tokenizer_one,
-        tokenizer_two,
-        vae.float(),
-        do_cache=True,
-        substitute_caption_map=token_dict,
-    )
-
-    print(f"# PTI : Loaded dataset, do_cache: {do_cache}")
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=train_batch_size,
-        shuffle=True,
-        num_workers=dataloader_num_workers,
-    )
 
     # Initialize new tokens for training.
 
@@ -677,6 +659,23 @@ def main(
             params_to_optimize,
             weight_decay=ti_weight_decay,
         )
+        
+    train_dataset = PreprocessedDataset(
+        instance_data_dir,
+        tokenizer_one,
+        tokenizer_two,
+        vae.float(),
+        do_cache=True,
+        substitute_caption_map=token_dict,
+    )
+
+    print(f"# PTI : Loaded dataset, do_cache: {do_cache}")
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=train_batch_size,
+        shuffle=True,
+        num_workers=dataloader_num_workers,
+    )
 
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / gradient_accumulation_steps
@@ -822,7 +821,7 @@ def main(
                 prompt_embeds,
                 added_cond_kwargs=added_kw,
             ).sample
-            
+
             # Compute the loss:
             if snr_gamma is None:
                 loss = (model_pred - noise).pow(2) * mask
