@@ -393,6 +393,8 @@ def post_process_captions(captions, text, concept_mode):
                     gpt_captions = ["TOK, " + caption if "TOK" not in caption else caption for caption in gpt_captions]
                     captions = gpt_captions
                     break
+                else:
+                    retry_count += 1
             except Exception as e:
                 retry_count += 1
                 print(f"An error occurred after try {retry_count}: {e}")

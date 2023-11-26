@@ -12,6 +12,8 @@ from typing import List, Optional
 
 import torch
 import torch.utils.checkpoint
+import torch.nn.functional as F
+
 from diffusers.models.attention_processor import LoRAAttnProcessor, LoRAAttnProcessor2_0
 from diffusers.optimization import get_scheduler
 from safetensors.torch import save_file
@@ -30,6 +32,33 @@ from diffusers import StableDiffusionXLPipeline
 from safetensors.torch import load_file
 
 import matplotlib.pyplot as plt
+
+
+
+def compute_snr(noise_scheduler, timesteps):
+    """
+    Computes SNR as per
+    https://github.com/TiankaiHang/Min-SNR-Diffusion-Training/blob/521b624bd70c67cee4bdf49225915f5945a872e3/guided_diffusion/gaussian_diffusion.py#L847-L849
+    """
+    alphas_cumprod = noise_scheduler.alphas_cumprod
+    sqrt_alphas_cumprod = alphas_cumprod**0.5
+    sqrt_one_minus_alphas_cumprod = (1.0 - alphas_cumprod) ** 0.5
+
+    # Expand the tensors.
+    # Adapted from https://github.com/TiankaiHang/Min-SNR-Diffusion-Training/blob/521b624bd70c67cee4bdf49225915f5945a872e3/guided_diffusion/gaussian_diffusion.py#L1026
+    sqrt_alphas_cumprod = sqrt_alphas_cumprod.to(device=timesteps.device)[timesteps].float()
+    while len(sqrt_alphas_cumprod.shape) < len(timesteps.shape):
+        sqrt_alphas_cumprod = sqrt_alphas_cumprod[..., None]
+    alpha = sqrt_alphas_cumprod.expand(timesteps.shape)
+
+    sqrt_one_minus_alphas_cumprod = sqrt_one_minus_alphas_cumprod.to(device=timesteps.device)[timesteps].float()
+    while len(sqrt_one_minus_alphas_cumprod.shape) < len(timesteps.shape):
+        sqrt_one_minus_alphas_cumprod = sqrt_one_minus_alphas_cumprod[..., None]
+    sigma = sqrt_one_minus_alphas_cumprod.expand(timesteps.shape)
+
+    # Compute SNR.
+    snr = (alpha / sigma) ** 2
+    return snr
 
 def plot_torch_hist(parameters, epoch, checkpoint_dir, name, bins=100, min_val=-1, max_val=1, ymax_f = 0.75):
     # Initialize histogram
@@ -161,11 +190,10 @@ def get_avg_lr(optimizer):
 import re
 
 def replace_in_string(s, replacements):
-    # Repeat until no more replacements can be made
     while True:
         replaced = False
         for target, replacement in replacements.items():
-            new_s = re.sub(target, replacement, s)
+            new_s = re.sub(target, replacement, s, flags=re.IGNORECASE)
             if new_s != s:
                 s = new_s
                 replaced = True
@@ -265,7 +293,7 @@ def prepare_prompt_for_lora(prompt, lora_path, interpolation=False, verbose=True
 
 
 @torch.no_grad()
-def render_images(lora_path, train_step, seed, is_lora, unet_lora_parameters, lora_scale = 0.7, n_imgs = 4, device = "cuda:0"):
+def render_images(lora_path, train_step, seed, is_lora, unet_lora_parameters, lora_scale = 0.65, n_imgs = 4, device = "cuda:0"):
 
     random.seed(seed)
 
@@ -298,13 +326,36 @@ def render_images(lora_path, train_step, seed, is_lora, unet_lora_parameters, lo
         validation_prompts = random.sample(validation_prompts, n_imgs)
         validation_prompts[0] = ''
 
+    elif concept_mode == "face":
+        validation_prompts = [
+                        '<concept> as pixel art, 8-bit video game style',
+                        'painting of <concept> by Vincent van Gogh',
+                        '<concept> as a superhero, wearing a cape',
+                        '<concept> as a statue made of marble',
+                        '<concept> as a character in a noir graphic novel, under a rain-soaked streetlamp',
+                        'stop motion animation of <concept> using clay, Wallace and Gromit style',
+                        '<concept> portrayed in a famous renaissance painting, replacing Mona Lisas face',
+                        'a photo of <concept> attending the Oscars, walking down the red carpet with sunglasses',
+                        '<concept> as a pop vinyl figure, complete with oversized head and small body',
+                        '<concept> as a retro holographic sticker, shimmering in bright colors',
+                        '<concept> as a bobblehead on a car dashboard, nodding incessantly',
+                        "<concept> captured in a snow globe, complete with intricate details",
+                        "a photo of <concept> climbing mount Everest in the snow, alpinism",
+                        "<concept> as an action figure superhero, lego toy, toy story",
+                        'a photo of a massive statue of <concept> in the middle of the city',
+                        'a masterful oil painting portraying <concept> with vibrant colors, brushstrokes and textures',
+                        'a vibrant low-poly artwork of <concept>, rendered in SVG, vector graphics',
+                        '<concept>, polaroid photograph',
+                        'a huge <concept> sand sculpture on a sunny beach, made of sand',
+                        '<concept> immortalized as an exquisite marble statue with masterful chiseling, swirling marble patterns and textures',
+                ]
+        validation_prompts = random.sample(validation_prompts, n_imgs)
+        validation_prompts[0] = '<concept>'
     else:
         validation_prompts = [
                 "<concept> captured in a snow globe, complete with intricate details",
                 "<concept> as a retro holographic sticker, shimmering in bright colors",
-                "a photo of <concept> climbing mount Everest in the snow, alpinism",
                 "a painting of <concept> by Vincent van Gogh",
-                "a photo of <concept> surfing a wave in Hawai",
                 "<concept> as an action figure superhero, lego toy, toy story",
                 'a photo of a massive statue of <concept> in the middle of the city',
                 'a masterful oil painting portraying <concept> with vibrant colors, brushstrokes and textures',
@@ -775,8 +826,28 @@ def main(
                 added_cond_kwargs=added_kw,
             ).sample
 
-            loss = (model_pred - noise).pow(2) * mask
-            loss = loss.mean()
+            snr_gamma = None
+            if snr_gamma is None:
+                loss = (model_pred - noise).pow(2) * mask
+                loss = loss.mean()
+            else:
+                # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+                # Since we predict the noise instead of x_0, the original formulation is slightly changed.
+                # This is discussed in Section 4.2 of the same paper.
+                snr = compute_snr(noise_scheduler, timesteps)
+                base_weight = (
+                    torch.stack([snr, snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
+                )
+                if noise_scheduler.config.prediction_type == "v_prediction":
+                    # Velocity objective needs to be floored to an SNR weight of one.
+                    mse_loss_weights = base_weight + 1
+                else:
+                    # Epsilon and sample both use the same loss weights.
+                    mse_loss_weights = base_weight
+
+                loss = F.mse_loss(model_pred.float(), noise.float(), reduction="none")
+                loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
+                loss = loss.mean()
 
             if l1_penalty > 0.0:
                 # Compute normalized L1 norm (mean of abs sum) of all lora parameters:
