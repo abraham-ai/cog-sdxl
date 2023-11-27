@@ -55,7 +55,7 @@ class Predictor(BasePredictor):
         ),
         train_batch_size: int = Input(
             description="Batch size (per device) for training",
-            default=2,
+            default=6,
         ),
         num_train_epochs: int = Input(
             description="Number of epochs to loop through your training dataset",
@@ -63,7 +63,7 @@ class Predictor(BasePredictor):
         ),
         max_train_steps: int = Input(
             description="Number of individual training steps. Takes precedence over num_train_epochs",
-            default=1000,
+            default=800,
         ),
         checkpointing_steps: int = Input(
             description="Number of steps between saving checkpoints. Set to very very high number to disable checkpointing, because you don't need one.",
@@ -79,7 +79,7 @@ class Predictor(BasePredictor):
         ),
         prodigy_d_coef: float = Input(
             description="Multiplier for internal learning rate of Prodigy optimizer",
-            default=0.5,
+            default=0.7,
         ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
@@ -99,7 +99,7 @@ class Predictor(BasePredictor):
         ),
         snr_gamma: float = Input(
             description="see https://arxiv.org/pdf/2303.09556.pdf, set to None to disable snr training",
-            default=None,
+            default=5.0,
         ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 5 is good, for complex concepts / styles you can try 8 or 12",
@@ -132,7 +132,7 @@ class Predictor(BasePredictor):
         ),
         clipseg_temperature: float = Input(
             description="How blurry you want the CLIPSeg mask to be. We recommend this value be something between `0.5` to `1.0`. If you want to have more sharp mask (but thus more errorful), you can decrease this value.",
-            default=0.75,
+            default=0.7,
         ),
         verbose: bool = Input(description="verbose output", default=True),
         run_name: str = Input(
@@ -149,17 +149,20 @@ class Predictor(BasePredictor):
         ),
         off_ratio_power: float = Input(
             description="How strongly to correct the embedding std vs the avg-std (0=off, 0.05=weak, 0.1=standard)",
-            default=0.125,
+            default=0.15,
         ),
 
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
         out_root_dir = "lora_models"
-        if not seed:
+
+        if seed is None:
             seed = np.random.randint(0, 2**32 - 1)
+
+        #print('error %d' %'error')
 
         if concept_mode == "face":
             mask_target_prompts = "face"
-            clipseg_temperature = 0.5
+            clipseg_temperature = 0.4
 
         if concept_mode == "concept": # gracefully catch any old versions of concept_mode
             concept_mode = "object"
@@ -209,6 +212,7 @@ class Predictor(BasePredictor):
             substitution_tokens=list(token_dict.keys()),
             left_right_flip_augmentation=left_right_flip_augmentation,
             augment_imgs_up_to_n = augment_imgs_up_to_n,
+            seed = seed,
         )
 
         # Make sure we've correctly inserted the TOK into every caption:
@@ -217,6 +221,7 @@ class Predictor(BasePredictor):
         # Make a dict of all the arguments and save it to args.json: 
         args_dict = {
             "name": name,
+            "checkpoint": "juggernaut",
             "concept_mode": concept_mode,
             "input_images": str(lora_training_urls),
             "num_training_images": n_imgs,

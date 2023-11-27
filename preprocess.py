@@ -80,6 +80,7 @@ def preprocess(
     substitution_tokens: List[str],
     left_right_flip_augmentation: bool = False,
     augment_imgs_up_to_n: int = 0,
+    seed: int = 0,
 ) -> Path:
 
     # clear TEMP_IN_DIR first.
@@ -130,6 +131,7 @@ def preprocess(
         concept_mode, 
         files=TEMP_IN_DIR,
         output_dir=output_dir,
+        seed=seed,
         caption_text=caption_text,
         mask_target_prompts=mask_target_prompts,
         target_size=target_size,
@@ -261,6 +263,7 @@ def clipseg_mask_generator(
 def cleanup_prompts_with_chatgpt(
     prompts, 
     concept_mode,    # face / object / style
+    seed,  # seed for chatgpt reproducibility
     verbose = True):
 
     if concept_mode == "object_injection":
@@ -322,10 +325,11 @@ def cleanup_prompts_with_chatgpt(
     print("Final chatgpt prompt:")
     print(final_chatgpt_prompt)
     print("--------------------------")
-    print("Calling chatgpt...")
+    print(f"Calling chatgpt with seed {seed}...")
 
     response = client.chat.completions.create(
             model="gpt-4-1106-preview",
+            seed=seed,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": final_chatgpt_prompt},
@@ -376,7 +380,7 @@ def extract_gpt_concept_name(gpt_completion, concept_mode):
     return concept_name
 
 
-def post_process_captions(captions, text, concept_mode):
+def post_process_captions(captions, text, concept_mode, job_seed):
 
     text = text.strip()
     print(f"Input captioning text: {text}")
@@ -385,7 +389,8 @@ def post_process_captions(captions, text, concept_mode):
         retry_count = 0
         while retry_count < 4:
             try:
-                gpt_captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode)
+                seed = job_seed + retry_count
+                gpt_captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode, seed)
                 n_toks = sum("TOK" in caption for caption in gpt_captions)
                 
                 if n_toks > int(0.8 * len(captions)) and (len(gpt_captions) == len(captions)):
@@ -596,6 +601,7 @@ def load_and_save_masks_and_captions(
     concept_mode: str,
     files: Union[str, List[str]],
     output_dir: str = "tmp_out",
+    seed: int = 0,
     caption_text: Optional[str] = None,
     mask_target_prompts: Optional[Union[List[str], str]] = None,
     target_size: int = 1024,
@@ -610,20 +616,6 @@ def load_and_save_masks_and_captions(
     """
     Loads images from the given files, generates masks for them, and saves the masks and captions and upscale images
     to output dir. If mask_target_prompts is given, it will generate kinda-segmentation-masks for the prompts and save them as well.
-
-    Example:
-    >>> x = load_and_save_masks_and_captions(
-                "face",
-                files="./data/images",
-                output_dir="./data/masks_and_captions",
-                caption_text="a photo of",
-                mask_target_prompts="cat",
-                target_size=768,
-                crop_based_on_salience=True,
-                use_face_detection_instead=False,
-                temp=1.0,
-                n_length=-1,
-            )
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -680,7 +672,7 @@ def load_and_save_masks_and_captions(
     captions = blip_captioning_dataset(images, captions,  substitution_tokens=substitution_tokens)
 
     # Cleanup prompts using chatgpt:
-    captions, trigger_text, gpt_concept_name = post_process_captions(captions, caption_text, concept_mode)
+    captions, trigger_text, gpt_concept_name = post_process_captions(captions, caption_text, concept_mode, seed)
 
     aug_imgs, aug_caps = [],[]
     while len(images) + len(aug_imgs) < augment_imgs_up_to_n: # if we still have a very small amount of imgs, do some basic augmentation:
