@@ -328,6 +328,8 @@ def unet_attn_processors_state_dict(unet) -> Dict[str, torch.tensor]:
 
     return attn_processors_state_dict
 
+import torch
+import torch.nn.functional as F
 
 class TokenEmbeddingsHandler:
     def __init__(self, text_encoders, tokenizers):
@@ -337,6 +339,57 @@ class TokenEmbeddingsHandler:
         self.train_ids: Optional[torch.Tensor] = None
         self.inserting_toks: Optional[List[str]] = None
         self.embeddings_settings = {}
+
+
+    def get_start_embedding(self, text_encoder, tokenizer, example_tokens, unk_token_id = 49407, verbose = False, desired_std_multiplier = 0.0):
+        print('-----------------------------------------------')
+        # do some cleanup:
+        example_tokens = [tok.lower() for tok in example_tokens]
+        example_tokens = list(set(example_tokens))
+
+        starting_ids = tokenizer.convert_tokens_to_ids(example_tokens)
+
+        # filter out any tokens that are mapped to unk_token_id:
+        example_tokens = [tok for tok, tok_id in zip(example_tokens, starting_ids) if tok_id != unk_token_id]
+        starting_ids = [tok_id for tok_id in starting_ids if tok_id != unk_token_id]
+
+        if verbose:
+            print("Token mapping:")
+            for i, token in enumerate(example_tokens):
+                print(f"{token} -> {starting_ids[i]}")
+
+        embeddings, stds = [], []
+        for i, token_index in enumerate(starting_ids):
+            embedding = text_encoder.text_model.embeddings.token_embedding.weight.data[token_index].clone()
+            embeddings.append(embedding)
+            stds.append(embedding.std())
+            #print(f"token: {example_tokens[i]}, embedding-std: {embedding.std():.4f}, embedding-mean: {embedding.mean():.4f}")
+
+        embeddings = torch.stack(embeddings)
+        #print(f"Embeddings: {embeddings.shape}, std: {embeddings.std():.4f}, mean: {embeddings.mean():.4f}")
+
+        if verbose:
+            # Compute the squared difference
+            squared_diff = (embeddings.unsqueeze(1) - embeddings.unsqueeze(0)) ** 2
+            squared_l2_dist = squared_diff.sum(-1)
+            l2_distance_matrix = torch.sqrt(squared_l2_dist)
+
+            print("Pairwise L2 Distance Matrix:")
+            print(" \t" + "\t".join(example_tokens))
+            for i, row in enumerate(l2_distance_matrix):
+                print(f"{example_tokens[i]}\t" + "\t".join(f"{dist:.4f}" for dist in row))
+
+        print(f"Using {len(embeddings)} embeddings to compute initial embedding...")
+        init_embedding = embeddings.mean(dim=0)
+
+        if (desired_std_multiplier is not None) and desired_std_multiplier > 0:
+            avg_std        = torch.stack(stds).mean()
+            current_std    = init_embedding.std()
+            scale_factor   = desired_std_multiplier * avg_std / current_std
+            init_embedding = init_embedding * scale_factor
+            print(f"Scaled Mean Embedding: std: {init_embedding.std():.4f}, mean: {init_embedding.mean():.4f}")
+        
+        return init_embedding
 
     def initialize_new_tokens(self, 
         inserting_toks: List[str],
@@ -367,14 +420,16 @@ class TokenEmbeddingsHandler:
 
             self.train_ids = tokenizer.convert_tokens_to_ids(self.inserting_toks)
 
-
             # random initialization of new tokens
             std_token_embedding = (
-                text_encoder.text_model.embeddings.token_embedding.weight.data.std()
+                text_encoder.text_model.embeddings.token_embedding.weight.data.std() #(axis=1).mean()
             )
             std_token_mean = (  
-                text_encoder.text_model.embeddings.token_embedding.weight.data.mean()
+                text_encoder.text_model.embeddings.token_embedding.weight.data.mean() #(axis=1).mean()
             )
+
+            print(f"Text encoder {idx} token_embedding_std:  {std_token_embedding}")
+            print(f"Text encoder {idx} token_embedding_mean: {std_token_mean}")
 
             if starting_toks is not None:
                 assert isinstance(
@@ -395,19 +450,47 @@ class TokenEmbeddingsHandler:
 
             else:
 
-                print(f"Text encoder {idx} token_embedding_std:  {std_token_embedding}")
-                print(f"Text encoder {idx} token_embedding_mean: {std_token_mean}")
+                if 1: 
+                    init_embeddings = (torch.randn(len(self.train_ids), text_encoder.text_model.config.hidden_size).to(device=self.device).to(dtype=self.dtype) * std_token_embedding)
+                else:
+                    first_tokens = [
+                        "face",
+                        "person",
+                        "Aiden",
+                        "Sophia",
+                        "Liam",
+                        "Isabella",
+                        "Ethan",
+                        "Emma",
+                        "Lucas",
+                        "Olivia",
+                        "Noah",
+                        "Ava",
+                    ]
+
+                    second_tokens = [
+                        "face",
+                        "person",
+                        "Smith",
+                        "Johnson",
+                        "Williams",
+                        "Brown",
+                        "Jones",
+                        "Garcia",
+                        "Miller",
+                        "Davis",
+                        "Rodriguez",
+                        "Martinez",
+                    ]
+
+                    start_embedding_one = self.get_start_embedding(text_encoder, tokenizer, first_tokens)
+                    start_embedding_two = self.get_start_embedding(text_encoder, tokenizer, second_tokens)
+                    init_embeddings = torch.stack([start_embedding_one, start_embedding_two])
+
+                    print(f"init_embedding std: {init_embeddings.std():.4f}, avg-std: {std_token_embedding:.4f}")
+
                 torch.manual_seed(seed)
-                text_encoder.text_model.embeddings.token_embedding.weight.data[
-                    self.train_ids
-                ] = (
-                    torch.randn(
-                        len(self.train_ids), text_encoder.text_model.config.hidden_size
-                    )
-                    .to(device=self.device)
-                    .to(dtype=self.dtype)
-                    * std_token_embedding
-                )
+                text_encoder.text_model.embeddings.token_embedding.weight.data[self.train_ids] = init_embeddings.clone()
 
             self.embeddings_settings[
                 f"original_embeddings_{idx}"
@@ -556,7 +639,7 @@ class TokenEmbeddingsHandler:
             )
             off_ratio = std_token_embedding / new_embeddings.std()
 
-            if off_ratio < 0.925:
+            if off_ratio < 0.95:
                 print(f"std-off ratio (avg-std / embedding-std) = {off_ratio:.6f}, this is prob not great..")
 
             new_embeddings = new_embeddings * (off_ratio**off_ratio_power)

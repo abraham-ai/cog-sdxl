@@ -55,7 +55,7 @@ class Predictor(BasePredictor):
         ),
         train_batch_size: int = Input(
             description="Batch size (per device) for training",
-            default=6,
+            default=2,
         ),
         num_train_epochs: int = Input(
             description="Number of epochs to loop through your training dataset",
@@ -63,7 +63,7 @@ class Predictor(BasePredictor):
         ),
         max_train_steps: int = Input(
             description="Number of individual training steps. Takes precedence over num_train_epochs",
-            default=800,
+            default=1000,
         ),
         checkpointing_steps: int = Input(
             description="Number of steps between saving checkpoints. Set to very very high number to disable checkpointing, because you don't need one.",
@@ -79,11 +79,11 @@ class Predictor(BasePredictor):
         ),
         prodigy_d_coef: float = Input(
             description="Multiplier for internal learning rate of Prodigy optimizer",
-            default=0.7,
+            default=0.5,
         ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
-            default=3e-3,
+            default=2e-3,
         ),
         ti_weight_decay: float = Input(
             description="weight decay for textual inversion embeddings. Don't alter unless you know what you're doing.",
@@ -99,13 +99,12 @@ class Predictor(BasePredictor):
         ),
         snr_gamma: float = Input(
             description="see https://arxiv.org/pdf/2303.09556.pdf, set to None to disable snr training",
-            default=5.0,
+            default=None,
         ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 5 is good, for complex concepts / styles you can try 8 or 12",
             default=12,
         ),
-        
         caption_prefix: str = Input(
             description="Prefix text prepended to automatic captioning. Must contain the 'TOK'. Example is 'a photo of TOK, '.  If empty, chatgpt will take care of this automatically",
             default="",
@@ -149,20 +148,27 @@ class Predictor(BasePredictor):
         ),
         off_ratio_power: float = Input(
             description="How strongly to correct the embedding std vs the avg-std (0=off, 0.05=weak, 0.1=standard)",
-            default=0.15,
+            default=0.125,
         ),
 
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
+
+        """
+        lambda @1024 training speed:
+        bs=2: 3.5 imgs/s, 1.8 batches/s
+        bs=4: 6.0 imgs/s,
+        bs=6: 8.0 imgs/s,
+        """
+
+        start_time = time.time()
         out_root_dir = "lora_models"
 
         if seed is None:
             seed = np.random.randint(0, 2**32 - 1)
 
-        #print('error %d' %'error')
-
         if concept_mode == "face":
             mask_target_prompts = "face"
-            clipseg_temperature = 0.4
+            clipseg_temperature = 0.5
 
         if concept_mode == "concept": # gracefully catch any old versions of concept_mode
             concept_mode = "object"
@@ -198,7 +204,7 @@ class Predictor(BasePredictor):
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
         os.makedirs(output_dir)
-
+        
         input_dir, n_imgs, trigger_text, segmentation_prompt, captions = preprocess(
             output_dir,
             concept_mode,
@@ -302,7 +308,7 @@ class Predictor(BasePredictor):
 
         attributes = args_dict
 
-        print("LORA training finished!")
+        print(f"LORA training finished in {(time.time() - start_time):.1f} seconds")
         print(f"Returning {out_path}")
 
         if DEBUG_MODE or debug:

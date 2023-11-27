@@ -1,10 +1,9 @@
 cog predict \
-    -i run_name="mira_prod_1.0"  \
+    -i run_name="test_mira"  \
     -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/mira.zip" \
     -i concept_mode="face" \
     -i left_right_flip_augmentation="False" \
-    -i max_train_steps="1000" \
-    -i prodigy_d_coef="1.0" \
+    -i max_train_steps="800" \
     -i lora_rank="12" \
     -i augment_imgs_up_to_n="20" \
     -i debug="True" \

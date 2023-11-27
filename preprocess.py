@@ -612,6 +612,7 @@ def load_and_save_masks_and_captions(
     substitution_tokens: Optional[List[str]] = None,
     add_lr_flips: bool = False,
     augment_imgs_up_to_n: int = 0,
+    use_dataset_captions: bool = True, # load captions from the dataset if they exist
 ):
     """
     Loads images from the given files, generates masks for them, and saves the masks and captions and upscale images
@@ -642,7 +643,7 @@ def load_and_save_masks_and_captions(
     for file in files:
         images.append(load_image_with_orientation(file))
         caption_file = os.path.splitext(file)[0] + ".txt"
-        if os.path.exists(caption_file):
+        if os.path.exists(caption_file) and use_dataset_captions:
             with open(caption_file, "r") as f:
                 captions.append(f.read())
         else:
