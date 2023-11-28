@@ -661,7 +661,7 @@ class TokenEmbeddingsHandler:
             off_ratio = std_token_embedding / new_embeddings.std()
             std_penalty += (off_ratio - 1.0)**2
 
-            if (off_ratio < 0.975) or (off_ratio > 1.025):
+            if (off_ratio < 0.95) or (off_ratio > 1.05):
                 print(f"std-off ratio-{idx} (target-std / embedding-std) = {off_ratio:.4f}, prob not ideal...")
 
             # rescale the embeddings to have a more similar std as before:
