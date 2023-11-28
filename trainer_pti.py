@@ -333,9 +333,7 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.65, n_img
                 'A solitary tree standing tall amidst a sea of buildings, Urban nature photography, vibrant colors, juxtaposition of natural elements with urban landscapes, play of light and shadow, storytelling through compositions',
                 ]
         validation_prompts = random.sample(validation_prompts, n_imgs)
-
-        if debug:
-            validation_prompts[0] = ''
+        validation_prompts[0] = ''
 
     elif concept_mode == "face":
         validation_prompts = [
@@ -362,8 +360,7 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.65, n_img
                 '<concept> immortalized as an exquisite marble statue with masterful chiseling, swirling marble patterns and textures',
                 ]
         validation_prompts = random.sample(validation_prompts, n_imgs)
-        if debug:
-            validation_prompts[0] = '<concept>'
+        validation_prompts[0] = '<concept>'
     else:
         validation_prompts = [
                 "an intricate wood carving of <concept> in a historic temple",
@@ -387,8 +384,7 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.65, n_img
                 "A breathtaking ice sculpture of <concept>, carved with precision and clarity, ice carving, frozen",
         ]
         validation_prompts = random.sample(validation_prompts, n_imgs)
-        if debug:
-            validation_prompts[0] = '<concept>'
+        validation_prompts[0] = '<concept>'
 
     torch.cuda.empty_cache()
     print(f"Loading inference pipeline from {SDXL_MODEL_CACHE}...")

@@ -1,5 +1,5 @@
 cog predict \
-    -i run_name="test" -i caption_prefix="" \
+    -i run_name="mira" -i caption_prefix="" \
     -i mask_target_prompts="" \
     -i augment_imgs_up_to_n="20" \
     -i concept_mode="face" \
@@ -9,11 +9,9 @@ cog predict \
     -i lora_rank="12" \
     -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/mira.zip" \
     -i lora_weight_decay="0.002" \
-    -i max_train_steps="600" \
-    -i off_ratio_power="0.1" \
-    -i prodigy_d_coef="1.0" \
+    -i max_train_steps="800" \
+    -i off_ratio_power="0.07" \
+    -i prodigy_d_coef="0.6" \
     -i resolution=1024 \
     -i seed="0" \
-    -i ti_lr="1e-3" \
-    -i ti_weight_decay="1e-4" \
-    -i train_batch_size="4"  
+    -i train_batch_size="4"
