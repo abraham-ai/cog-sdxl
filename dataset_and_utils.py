@@ -340,6 +340,59 @@ class TokenEmbeddingsHandler:
         self.inserting_toks: Optional[List[str]] = None
         self.embeddings_settings = {}
 
+    
+    def get_trainable_embeddings(self):
+        
+        trainable_embeddings = []
+        for idx, text_encoder in enumerate(self.text_encoders):
+            trainable_embeddings.append(
+                text_encoder.text_model.embeddings.token_embedding.weight.data[
+                    self.train_ids
+                ]
+            )
+
+        return trainable_embeddings
+
+    def find_nearest_tokens(self, query_embedding, tokenizer, text_encoder, idx, distance_metric, top_k = 5):
+        # given a query embedding, compute the distance to all embeddings in the text encoder
+        # and return the top_k closest tokens
+
+        assert distance_metric in ["l2", "cosine"], "distance_metric should be either 'l2' or 'cosine'"
+        
+        # get all non-optimized embeddings:
+        index_no_updates = self.embeddings_settings[f"index_no_updates_{idx}"]
+        embeddings = text_encoder.text_model.embeddings.token_embedding.weight.data[index_no_updates]
+
+        # compute the distance between the query embedding and all embeddings:
+        if distance_metric == "l2":
+            diff = (embeddings - query_embedding.unsqueeze(0))**2
+            distances = diff.sum(-1)
+            distances, indices = torch.topk(distances, top_k, dim=0, largest=False)
+        elif distance_metric == "cosine":
+            distances = F.cosine_similarity(embeddings, query_embedding.unsqueeze(0), dim=-1)
+            distances, indices = torch.topk(distances, top_k, dim=0, largest=True)
+
+        nearest_tokens = tokenizer.convert_ids_to_tokens(indices)
+        return nearest_tokens, distances
+        
+
+    def print_token_info(self, distance_metric = "cosine"):
+        print(f"----------- Closest tokens (distance_metric = {distance_metric}) --------------")
+        current_token_embeddings = self.get_trainable_embeddings()
+        idx = 0
+
+        for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
+            query_embeddings = current_token_embeddings[idx]
+
+            for token_id, query_embedding in enumerate(query_embeddings):
+                nearest_tokens, distances = self.find_nearest_tokens(query_embedding, tokenizer, text_encoder, idx, distance_metric)
+
+                # print the results:
+                print(f"txt-encoder {idx}, token {token_id}: :")
+                for i, (token, dist) in enumerate(zip(nearest_tokens, distances)):
+                    print(f"---> {distance_metric} of {dist:.4f}: {token}")
+
+            idx += 1
 
     def get_start_embedding(self, text_encoder, tokenizer, example_tokens, unk_token_id = 49407, verbose = False, desired_std_multiplier = 0.0):
         print('-----------------------------------------------')
@@ -399,6 +452,7 @@ class TokenEmbeddingsHandler:
 
         print("Initializing new tokens...")
         print(inserting_toks)
+        torch.manual_seed(seed)
 
         idx = 0
         for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
@@ -489,7 +543,6 @@ class TokenEmbeddingsHandler:
 
                     print(f"init_embedding std: {init_embeddings.std():.4f}, avg-std: {std_token_embedding:.4f}")
 
-                torch.manual_seed(seed)
                 text_encoder.text_model.embeddings.token_embedding.weight.data[self.train_ids] = init_embeddings.clone()
 
             self.embeddings_settings[
@@ -503,18 +556,6 @@ class TokenEmbeddingsHandler:
             self.embeddings_settings[f"index_no_updates_{idx}"] = inu
 
             idx += 1
-
-    def get_trainable_embeddings(self):
-        
-        trainable_embeddings = []
-        for idx, text_encoder in enumerate(self.text_encoders):
-            trainable_embeddings.append(
-                text_encoder.text_model.embeddings.token_embedding.weight.data[
-                    self.train_ids
-                ]
-            )
-
-        return trainable_embeddings
             
 
     #############################################################################################################
@@ -567,12 +608,6 @@ class TokenEmbeddingsHandler:
 
 
 
-
-
-
-
-
-
     def save_embeddings(self, file_path: str):
         assert (
             self.train_ids is not None
@@ -612,8 +647,34 @@ class TokenEmbeddingsHandler:
             self.train_ids
         ] = loaded_embeddings.to(device=self.device).to(dtype=self.dtype)
 
+    def fix_embedding_std(self, off_ratio_power = 0.1):
+        std_penalty = 0.0
+        idx = 0
+
+        for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
+            index_no_updates    = self.embeddings_settings[f"index_no_updates_{idx}"]
+            std_token_embedding = self.embeddings_settings[f"std_token_embedding_{idx}"]
+            index_updates = ~index_no_updates
+
+            new_embeddings = (text_encoder.text_model.embeddings.token_embedding.weight.data[index_updates])
+
+            off_ratio = std_token_embedding / new_embeddings.std()
+            std_penalty += (off_ratio - 1.0)**2
+
+            if (off_ratio < 0.975) or (off_ratio > 1.025):
+                print(f"std-off ratio-{idx} (target-std / embedding-std) = {off_ratio:.4f}, prob not ideal...")
+
+            # rescale the embeddings to have a more similar std as before:
+            new_embeddings = new_embeddings * (off_ratio**off_ratio_power)
+            text_encoder.text_model.embeddings.token_embedding.weight.data[
+                    index_updates
+                ] = new_embeddings
+
+            idx += 1
+
+
     @torch.no_grad()
-    def retract_embeddings(self, off_ratio_power = 0.1, print_stds = False):
+    def retract_embeddings(self, print_stds = False):
         idx = 0
         means, stds = [], []
 
@@ -637,15 +698,6 @@ class TokenEmbeddingsHandler:
                     index_updates
                 ]
             )
-            off_ratio = std_token_embedding / new_embeddings.std()
-
-            if off_ratio < 0.95:
-                print(f"std-off ratio (avg-std / embedding-std) = {off_ratio:.6f}, this is prob not great..")
-
-            new_embeddings = new_embeddings * (off_ratio**off_ratio_power)
-            text_encoder.text_model.embeddings.token_embedding.weight.data[
-                index_updates
-            ] = new_embeddings
 
             idx += 1
 

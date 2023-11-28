@@ -148,7 +148,7 @@ class Predictor(BasePredictor):
         ),
         off_ratio_power: float = Input(
             description="How strongly to correct the embedding std vs the avg-std (0=off, 0.05=weak, 0.1=standard)",
-            default=0.125,
+            default=0.1,
         ),
 
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
@@ -156,6 +156,7 @@ class Predictor(BasePredictor):
         """
         lambda @1024 training speed:
         bs=2: 3.5 imgs/s, 1.8 batches/s
+        bs=3: 5.1 imgs/s
         bs=4: 6.0 imgs/s,
         bs=6: 8.0 imgs/s,
         """
@@ -168,7 +169,7 @@ class Predictor(BasePredictor):
 
         if concept_mode == "face":
             mask_target_prompts = "face"
-            clipseg_temperature = 0.5
+            clipseg_temperature = 0.4
 
         if concept_mode == "concept": # gracefully catch any old versions of concept_mode
             concept_mode = "object"

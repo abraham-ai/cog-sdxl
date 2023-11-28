@@ -294,7 +294,7 @@ def prepare_prompt_for_lora(prompt, lora_path, interpolation=False, verbose=True
 
 
 @torch.no_grad()
-def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.65, n_imgs = 4, device = "cuda:0"):
+def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.65, n_imgs = 4, debug = False, device = "cuda:0"):
 
     random.seed(seed)
 
@@ -333,7 +333,9 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.65, n_img
                 'A solitary tree standing tall amidst a sea of buildings, Urban nature photography, vibrant colors, juxtaposition of natural elements with urban landscapes, play of light and shadow, storytelling through compositions',
                 ]
         validation_prompts = random.sample(validation_prompts, n_imgs)
-        validation_prompts[0] = ''
+
+        if debug:
+            validation_prompts[0] = ''
 
     elif concept_mode == "face":
         validation_prompts = [
@@ -360,7 +362,8 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.65, n_img
                 '<concept> immortalized as an exquisite marble statue with masterful chiseling, swirling marble patterns and textures',
                 ]
         validation_prompts = random.sample(validation_prompts, n_imgs)
-        validation_prompts[0] = '<concept>'
+        if debug:
+            validation_prompts[0] = '<concept>'
     else:
         validation_prompts = [
                 "an intricate wood carving of <concept> in a historic temple",
@@ -384,7 +387,8 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.65, n_img
                 "A breathtaking ice sculpture of <concept>, carved with precision and clarity, ice carving, frozen",
         ]
         validation_prompts = random.sample(validation_prompts, n_imgs)
-        validation_prompts[0] = '<concept>'
+        if debug:
+            validation_prompts[0] = '<concept>'
 
     torch.cuda.empty_cache()
     print(f"Loading inference pipeline from {SDXL_MODEL_CACHE}...")
@@ -529,7 +533,7 @@ def main(
         [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two]
     )
     
-    #starting_toks = ["man", "face"]
+    #starting_toks = ["person", "face"]
     starting_toks = None
     embedding_handler.initialize_new_tokens(inserting_toks=inserting_list_tokens, starting_toks=starting_toks, seed=seed)
 
@@ -854,7 +858,6 @@ def main(
                     mse_loss_weights = base_weight
 
                 mse_loss_weights = mse_loss_weights / mse_loss_weights.mean()
-
                 loss = (model_pred - noise).pow(2) * mask
                 loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
                 loss = loss.mean()
@@ -864,6 +867,9 @@ def main(
                 l1_norm = sum(p.abs().sum() for p in unet_lora_parameters) / total_n_lora_params
                 #print(f"Loss: {loss.item():.6f}, L1-penalty: {(l1_penalty * l1_norm).item():.6f}")
                 loss += l1_penalty * l1_norm
+
+            if global_step % 10 == 0:
+                embedding_handler.print_token_info()
 
             if global_step % 300 == 0 and debug:
                 plot_torch_hist(unet_lora_parameters, global_step, checkpoint_dir, "lora_weights", bins=100, min_val=-0.5, max_val=0.3, ymax_f = 0.05)
@@ -880,7 +886,8 @@ def main(
             optimizer_prod.zero_grad()
 
             # every step, we reset the non-trainable embeddings to the original embeddings.
-            embedding_handler.retract_embeddings(off_ratio_power = off_ratio_power, print_stds = (global_step % 50 == 0))
+            embedding_handler.retract_embeddings(print_stds = (global_step % 50 == 0))
+            embedding_handler.fix_embedding_std(off_ratio_power)
             
             # Track the learning rates for final plotting:
             try:
@@ -902,6 +909,7 @@ def main(
                 plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_lora_parameters, unet_param_to_optimize_names)
                 last_save_step = global_step
+                render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4, debug=debug)
             
             images_done += train_batch_size
             global_step += 1
@@ -924,10 +932,7 @@ def main(
     else:
         print(f"Skipping final save, {output_save_dir} already exists")
 
-    # Finally, render 4 imgs:
-    is_lora = len(unet_param_to_optimize) > 0
-
-    # clear the model cache:
+    # clear the model cache and save grid imgs:
     del unet
     del vae
     del text_encoder_one
@@ -938,7 +943,7 @@ def main(
     gc.collect()
     torch.cuda.empty_cache()
 
-    render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4)
+    render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4, debug=debug)
 
     return output_save_dir
 
