@@ -281,11 +281,11 @@ def cleanup_prompts_with_chatgpt(
 
     if concept_mode == "object":
         chat_gpt_prompt_1 = """
-        Analyze a set of (poor) image descriptions each featuring the same concept, figure or thing called TOK.
+        Analyze a set of (poor) image descriptions each featuring the same concept, figure or thing.
         Tasks:
-        1. Deduce a concise, fitting name for the concept (Concept Name).
-        2. Substitute this concept in each description with "TOK", rearranging or adjusting the text where needed. Hallucinate TOK into the description if necessary (but dont mention when doing so, only provide the final description)!
-        3. Streamline each description to its core elements, ensuring clarity and mandatory inclusion of "TOK".
+        1. Deduce a concise, fitting name for the concept that is visually descriptive (Concept Name).
+        2. Substitute the concept in each description with the placeholder "TOK", rearranging or adjusting the text where needed. Hallucinate TOK into the description if necessary (but dont mention when doing so, simply provide the final description)!
+        3. Streamline each description to its core elements, ensuring clarity and mandatory inclusion of the placeholder string "TOK".
         The descriptions are:
         """
         
@@ -387,10 +387,9 @@ def post_process_captions(captions, text, concept_mode, job_seed):
 
     if len(captions) > 3 and len(captions) < MAX_GPT_PROMPTS and not text:
         retry_count = 0
-        while retry_count < 4:
+        while retry_count < 10:
             try:
-                seed = job_seed + retry_count
-                gpt_captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode, seed)
+                gpt_captions, gpt_concept_name, trigger_text = cleanup_prompts_with_chatgpt(captions, concept_mode, job_seed + retry_count)
                 n_toks = sum("TOK" in caption for caption in gpt_captions)
                 
                 if n_toks > int(0.8 * len(captions)) and (len(gpt_captions) == len(captions)):
@@ -405,7 +404,7 @@ def post_process_captions(captions, text, concept_mode, job_seed):
                 print(f"An error occurred after try {retry_count}: {e}")
                 time.sleep(1)
         else:
-            gpt_concept_name, trigger_text = None, text
+            gpt_concept_name, trigger_text = None, "TOK"
     else:
         # simple concat of trigger text with rest of prompt:
         if len(text) == 0:

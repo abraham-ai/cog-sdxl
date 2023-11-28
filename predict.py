@@ -55,7 +55,7 @@ class Predictor(BasePredictor):
         ),
         train_batch_size: int = Input(
             description="Batch size (per device) for training",
-            default=2,
+            default=4,
         ),
         num_train_epochs: int = Input(
             description="Number of epochs to loop through your training dataset",
@@ -63,7 +63,7 @@ class Predictor(BasePredictor):
         ),
         max_train_steps: int = Input(
             description="Number of individual training steps. Takes precedence over num_train_epochs",
-            default=1000,
+            default=800,
         ),
         checkpointing_steps: int = Input(
             description="Number of steps between saving checkpoints. Set to very very high number to disable checkpointing, because you don't need one.",
@@ -79,7 +79,7 @@ class Predictor(BasePredictor):
         ),
         prodigy_d_coef: float = Input(
             description="Multiplier for internal learning rate of Prodigy optimizer",
-            default=0.5,
+            default=0.8,
         ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
@@ -99,7 +99,7 @@ class Predictor(BasePredictor):
         ),
         snr_gamma: float = Input(
             description="see https://arxiv.org/pdf/2303.09556.pdf, set to None to disable snr training",
-            default=None,
+            default=5.0,
         ),
         lora_rank: int = Input(
             description="Rank of LoRA embeddings. For faces 5 is good, for complex concepts / styles you can try 8 or 12",
@@ -148,7 +148,7 @@ class Predictor(BasePredictor):
         ),
         off_ratio_power: float = Input(
             description="How strongly to correct the embedding std vs the avg-std (0=off, 0.05=weak, 0.1=standard)",
-            default=0.1,
+            default=0.075,
         ),
 
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
@@ -296,6 +296,9 @@ class Predictor(BasePredictor):
             off_ratio_power=off_ratio_power,
         )
 
+        runtime = time.time() - start_time
+
+
         validation_grid_img_path = os.path.join(output_save_dir, "validation_grid.jpg")
         out_path = "trained_model.tar"
         directory = Path(output_save_dir)
@@ -309,7 +312,7 @@ class Predictor(BasePredictor):
 
         attributes = args_dict
 
-        print(f"LORA training finished in {(time.time() - start_time):.1f} seconds")
+        print(f"LORA training finished in {runtime:.1f} seconds")
         print(f"Returning {out_path}")
 
         if DEBUG_MODE or debug:

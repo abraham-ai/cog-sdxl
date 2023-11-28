@@ -868,7 +868,7 @@ def main(
                 #print(f"Loss: {loss.item():.6f}, L1-penalty: {(l1_penalty * l1_norm).item():.6f}")
                 loss += l1_penalty * l1_norm
 
-            if global_step % 10 == 0:
+            if global_step % 100 == 0 and debug:
                 embedding_handler.print_token_info()
 
             if global_step % 300 == 0 and debug:
