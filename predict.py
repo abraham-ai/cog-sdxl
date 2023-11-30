@@ -135,7 +135,7 @@ class Predictor(BasePredictor):
         ),
         clipseg_temperature: float = Input(
             description="How blurry you want the CLIPSeg mask to be. We recommend this value be something between `0.5` to `1.0`. If you want to have more sharp mask (but thus more errorful), you can decrease this value.",
-            default=0.7,
+            default=0.6,
         ),
         verbose: bool = Input(description="verbose output", default=True),
         run_name: str = Input(
@@ -172,6 +172,7 @@ class Predictor(BasePredictor):
             seed = np.random.randint(0, 2**32 - 1)
 
         if concept_mode == "face":
+            left_right_flip_augmentation = False  # always disable lr flips for face mode!
             mask_target_prompts = "face"
             clipseg_temperature = 0.4
 
@@ -179,7 +180,7 @@ class Predictor(BasePredictor):
             concept_mode = "object"
 
         if concept_mode == "style": # for styles you usually want the LoRA matrices to absorb a lot (instead of just the token embedding)
-            l1_penalty = 0.02
+            l1_penalty = 0.05
 
         print(f"cog:predict:train_lora:{concept_mode}")
         #print("error %d" %'error')
