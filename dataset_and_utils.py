@@ -444,6 +444,13 @@ class TokenEmbeddingsHandler:
         
         return init_embedding
 
+    def plot_token_embeddings(self, example_tokens):
+        idx = 0
+        for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
+            token_ids = tokenizer.convert_tokens_to_ids(self.inserting_toks)
+            
+
+
     def initialize_new_tokens(self, 
         inserting_toks: List[str],
         starting_toks:  Optional[List[str]] = None,

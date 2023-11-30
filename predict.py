@@ -311,20 +311,19 @@ class Predictor(BasePredictor):
 
         if not debug:
             keys_to_keep = [
-            "name": name,
-            "checkpoint": "juggernaut",
-            "concept_mode": concept_mode,
-            "input_images": str(lora_training_urls),
-            "seed": seed,
-            "resolution": resolution,
-            "max_train_steps": max_train_steps,
-            "total_runtime": runtime,
-            "lora_rank": lora_rank,
-            "trigger_text": trigger_text,
-            "left_right_flip_augmentation": left_right_flip_augmentation,
-            "run_name": run_name,
-            "trainig_captions": captions[:50], # avoid sending back too many captions
-            ]
+                "name",
+                "checkpoint",
+                "concept_mode",
+                "input_images",
+                "seed",
+                "resolution",
+                "max_train_steps",
+                "total_runtime",
+                "lora_rank",
+                "trigger_text",
+                "left_right_flip_augmentation",
+                "run_name",
+                "trainig_captions"]
             args_dict = {k: v for k, v in args_dict.items() if k in keys_to_keep}
 
         # save final training_args:

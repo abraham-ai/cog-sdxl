@@ -910,11 +910,12 @@ def main(
             # Print some statistics:
             if (global_step % checkpointing_steps == 0) and (global_step > 0):
                 output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
-                plot_loss(losses, save_path=f'{output_dir}/losses.png')
-                plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
                 save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_lora_parameters, unet_param_to_optimize_names)
                 last_save_step = global_step
-                render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4, debug=debug)
+                if debug:
+                    plot_loss(losses, save_path=f'{output_dir}/losses.png')
+                    plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
+                    render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4, debug=debug)
             
             images_done += train_batch_size
             global_step += 1
