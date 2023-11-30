@@ -51,7 +51,7 @@ class Predictor(BasePredictor):
         ),
         resolution: int = Input(
             description="Square pixel resolution which your images will be resized to for training recommended [768-1024]",
-            default=1024,
+            default=960,
         ),
         train_batch_size: int = Input(
             description="Batch size (per device) for training",
@@ -83,11 +83,11 @@ class Predictor(BasePredictor):
         ),
         ti_lr: float = Input(
             description="Learning rate for training textual inversion embeddings. Don't alter unless you know what you're doing.",
-            default=2e-3,
+            default=1e-3,
         ),
         ti_weight_decay: float = Input(
             description="weight decay for textual inversion embeddings. Don't alter unless you know what you're doing.",
-            default=1e-4,
+            default=3e-4,
         ),
         lora_weight_decay: float = Input(
             description="weight decay for lora parameters. Don't alter unless you know what you're doing.",
@@ -96,6 +96,10 @@ class Predictor(BasePredictor):
         l1_penalty: float = Input(
             description="Sparsity penalty for the LoRA matrices, increases merge-ability and maybe generalization",
             default=0.1,
+        ),
+        lora_param_scaler: float = Input(
+            description="Multiplier for the starting weights of the lora matrices",
+            default=0.5,
         ),
         snr_gamma: float = Input(
             description="see https://arxiv.org/pdf/2303.09556.pdf, set to None to disable snr training",
@@ -148,7 +152,7 @@ class Predictor(BasePredictor):
         ),
         off_ratio_power: float = Input(
             description="How strongly to correct the embedding std vs the avg-std (0=off, 0.05=weak, 0.1=standard)",
-            default=0.075,
+            default=0.1,
         ),
 
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
@@ -244,6 +248,7 @@ class Predictor(BasePredictor):
             "ti_weight_decay": ti_weight_decay,
             "lora_weight_decay": lora_weight_decay,
             "l1_penalty": l1_penalty,
+            "lora_param_scaler": lora_param_scaler,
             "lora_rank": lora_rank,
             "snr_gamma": snr_gamma,
             "token_string": token_string,

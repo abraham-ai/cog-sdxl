@@ -62,30 +62,20 @@ def compute_snr(noise_scheduler, timesteps):
     return snr
 
 def plot_torch_hist(parameters, epoch, checkpoint_dir, name, bins=100, min_val=-1, max_val=1, ymax_f = 0.75):
-    # Initialize histogram
-    hist_values = torch.zeros(bins).cuda()
+    # Flatten and concatenate all parameters into a single tensor
+    all_params = torch.cat([p.data.view(-1) for p in parameters])
 
-    n_values = 0
-    sum_values = 0
+    # Convert to CPU for plotting
+    all_params_cpu = all_params.cpu().float().numpy()
 
-    # Update histogram batch-wise to save memory
-    for p in parameters:
-        try:
-            hist = torch.histc(p.data, bins=bins)
-        except:
-            hist = torch.histc(p.float(), bins=bins)
-        hist_values += hist
-        n_values += p.numel()
-        sum_values += p.data.abs().sum()
-
-    # Convert to NumPy and plot
-    hist_values_cpu = hist_values.cpu().numpy()
+    # Plot histogram
     plt.figure()
-    plt.hist([min_val + (max_val - min_val) * (i + 0.5) / bins for i in range(bins)], bins, weights=hist_values_cpu)
-    plt.ylim(0, ymax_f * n_values)
+    plt.hist(all_params_cpu, bins=bins, density=False)
+    plt.ylim(0, ymax_f * len(all_params_cpu))
+    plt.xlim(min_val, max_val)
     plt.xlabel('Weight Value')
     plt.ylabel('Count')
-    plt.title(f'Epoch {epoch} {name} Histogram (mean = {sum_values / n_values:.3f})')
+    plt.title(f'Epoch {epoch} {name} Histogram (std = {np.std(all_params_cpu):.4f})')
     plt.savefig(f"{checkpoint_dir}/{name}_histogram_{epoch:04d}.png")
     plt.close()
 
@@ -160,7 +150,7 @@ def patch_pipe_with_lora(pipe, lora_path):
 
     unet.load_state_dict(tensors, strict=False)
     handler = TokenEmbeddingsHandler([pipe.text_encoder, pipe.text_encoder_2], [pipe.tokenizer, pipe.tokenizer_2])
-    handler.load_embeddings(os.path.join(lora_path, "embeddings.pti"))
+    handler.load_embeddings(os.path.join(lora_path, "embeddings.safetensors"))
     return pipe
 
 def get_avg_lr(optimizer):
@@ -432,6 +422,9 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
     print(f"Saving checkpoint at step.. {global_step}")
     os.makedirs(output_dir, exist_ok=True)
 
+    args_dict["n_training_steps"] = global_step
+    args_dict["total_n_imgs_seen"] = global_step * args_dict["train_batch_size"]
+
     if not is_lora:
         lora_tensors = {
             name: param
@@ -445,7 +438,7 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
         lora_tensors = {}
 
     save_file(lora_tensors, f"{output_dir}/lora.safetensors")
-    embedding_handler.save_embeddings(f"{output_dir}/embeddings.pti",)
+    embedding_handler.save_embeddings(f"{output_dir}/embeddings.safetensors",)
 
     with open(f"{output_dir}/special_params.json", "w") as f:
         json.dump(token_dict, f)
@@ -613,6 +606,11 @@ def main(
                     cross_attention_dim=cross_attention_dim,
                     rank=lora_rank,
                 )
+
+                # scale all the parameters inside the lora module by lora_param_scaler
+                for param in module.parameters():
+                    param.data = param.data * args_dict['lora_param_scaler']
+
                 unet_lora_attn_procs[name] = module
                 module.to(device)
                 unet_lora_parameters.extend(module.parameters())
@@ -868,9 +866,11 @@ def main(
                 embedding_handler.print_token_info()
 
             if global_step % 300 == 0 and debug:
-                plot_torch_hist(unet_lora_parameters, global_step, checkpoint_dir, "lora_weights", bins=100, min_val=-0.5, max_val=0.3, ymax_f = 0.05)
-                plot_torch_hist(embedding_handler.get_trainable_embeddings(), global_step, checkpoint_dir, "embeddings_weights", bins=100, min_val=-0.05, max_val=0.05, ymax_f = 0.05)
-         
+                plot_torch_hist(unet_lora_parameters, global_step, output_dir, "lora_weights", min_val=-0.3, max_val=0.3, ymax_f = 0.05)
+                plot_torch_hist(embedding_handler.get_trainable_embeddings(), global_step, output_dir, "embeddings_weights", min_val=-0.05, max_val=0.05, ymax_f = 0.05)
+                plot_loss(losses, save_path=f'{output_dir}/losses.png')
+                plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
+
             losses.append(loss.item())
             loss.backward()
 
@@ -922,6 +922,8 @@ def main(
     if debug:
         plot_loss(losses, save_path=f'{output_dir}/losses.png')
         plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
+        plot_torch_hist(unet_lora_parameters, global_step, output_dir, "lora_weights", min_val=-0.3, max_val=0.3, ymax_f = 0.05)
+        plot_torch_hist(embedding_handler.get_trainable_embeddings(), global_step, output_dir, "embeddings_weights", min_val=-0.05, max_val=0.05, ymax_f = 0.05)      
 
     if not os.path.exists(output_save_dir):
         save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_lora_parameters, unet_param_to_optimize_names)

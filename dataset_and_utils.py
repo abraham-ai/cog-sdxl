@@ -606,9 +606,7 @@ class TokenEmbeddingsHandler:
             print("pooled_prompt_embeds:")
             print(pooled_prompt_embeds.shape)
 
-
-
-    def save_embeddings(self, file_path: str):
+    def save_embeddings(self, file_path: str, txt_encoder_keys = ["clip_l", "clip_g"]):
         assert (
             self.train_ids is not None
         ), "Initialize new tokens before saving embeddings."
@@ -622,9 +620,10 @@ class TokenEmbeddingsHandler:
                     self.train_ids
                 ]
             )
-            tensors[f"text_encoders_{idx}"] = new_token_embeddings
+            tensors[txt_encoder_keys[idx]] = new_token_embeddings
 
         save_file(tensors, file_path)
+
 
     @property
     def dtype(self):
@@ -718,11 +717,18 @@ class TokenEmbeddingsHandler:
                     print(f" --- Means: ({mean_0:.6f}, {mean_1:.6f})")
                     print(f" --- Stds:  ({std_0:.6f}, {std_1:.6f})")
 
-    def load_embeddings(self, file_path: str):
+    def load_embeddings(self, file_path: str, txt_encoder_keys = ["clip_l", "clip_g"]):
+        if not os.path.exists(file_path):
+            file_path = file_path.replace(".pti", ".safetensors")
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"{file_path} does not exist.")
+
         with safe_open(file_path, framework="pt", device=self.device.type) as f:
             for idx in range(len(self.text_encoders)):
                 text_encoder = self.text_encoders[idx]
                 tokenizer = self.tokenizers[idx]
-
-                loaded_embeddings = f.get_tensor(f"text_encoders_{idx}")
+                try:
+                    loaded_embeddings = f.get_tensor(txt_encoder_keys[idx])
+                except:
+                    loaded_embeddings = f.get_tensor(f"text_encoders_{idx}")
                 self._load_embeddings(loaded_embeddings, tokenizer, text_encoder)
