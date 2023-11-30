@@ -16,6 +16,10 @@ DEBUG_MODE = False
 
 load_dotenv()
 
+def clean_filename(filename):
+    allowed_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+    return ''.join(c for c in filename if c in allowed_chars)
+
 class CogOutput(BaseModel):
     files: list[Path]
     name: Optional[str] = None
@@ -35,7 +39,7 @@ class Predictor(BasePredictor):
         self, 
         name: str = Input(
             description="Name of new LORA concept",
-            default=None
+            default="unnamed"
         ),
         lora_training_urls: str = Input(
             description="Training images for new LORA concept (can be image urls or a .zip file of images)", 
@@ -303,10 +307,32 @@ class Predictor(BasePredictor):
         )
 
         runtime = time.time() - start_time
+        args_dict["total_runtime"] = runtime
 
+        if not debug:
+            keys_to_keep = [
+            "name": name,
+            "checkpoint": "juggernaut",
+            "concept_mode": concept_mode,
+            "input_images": str(lora_training_urls),
+            "seed": seed,
+            "resolution": resolution,
+            "max_train_steps": max_train_steps,
+            "total_runtime": runtime,
+            "lora_rank": lora_rank,
+            "trigger_text": trigger_text,
+            "left_right_flip_augmentation": left_right_flip_augmentation,
+            "run_name": run_name,
+            "trainig_captions": captions[:50], # avoid sending back too many captions
+            ]
+            args_dict = {k: v for k, v in args_dict.items() if k in keys_to_keep}
+
+        # save final training_args:
+        with open(os.path.join(output_dir, "training_args.json"), "w") as f:
+            json.dump(args_dict, f, indent=4)
 
         validation_grid_img_path = os.path.join(output_save_dir, "validation_grid.jpg")
-        out_path = "trained_model.tar"
+        out_path = f"{clean_filename(name)}_eden_concept_lora_{int(time.time())}.tar"
         directory = Path(output_save_dir)
 
         with tarfile.open(out_path, "w") as tar:

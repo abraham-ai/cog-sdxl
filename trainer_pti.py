@@ -109,40 +109,45 @@ def patch_pipe_with_lora(pipe, lora_path):
     with open(os.path.join(lora_path, "training_args.json"), "r") as f:
         training_args  = json.load(f)
         lora_rank      = training_args["lora_rank"]
-        prodigy_d_coef = training_args["prodigy_d_coef"]
-    
+        try:
+            concept_name = training_args["name"].lower()
+        except:
+            concept_name = "eden_concept_lora"
+
+        # Make sure all weird delimiter characters are removed from concept_name before using it as a filepath:
+        concept_name = concept_name.replace(" ", "_").replace("/", "_").replace("\\", "_").replace(":", "_").replace("*", "_").replace("?", "_").replace("\"", "_").replace("<", "_").replace(">", "_").replace("|", "_")
+
     unet = pipe.unet
-    lora_safetensors_path = os.path.join(lora_path, "lora.safetensors")
+    lora_safetensors_path = os.path.join(lora_path, f"{concept_name}_lora.safetensors")
 
     if os.path.exists(lora_safetensors_path):
         tensors = load_file(lora_safetensors_path)
         unet_lora_attn_procs = {}
-        if prodigy_d_coef > 0.0:
-            for name, attn_processor in unet.attn_processors.items():
-                cross_attention_dim = (
-                    None
-                    if name.endswith("attn1.processor")
-                    else unet.config.cross_attention_dim
-                )
-                if name.startswith("mid_block"):
-                    hidden_size = unet.config.block_out_channels[-1]
-                elif name.startswith("up_blocks"):
-                    block_id = int(name[len("up_blocks.")])
-                    hidden_size = list(reversed(unet.config.block_out_channels))[
-                        block_id
-                    ]
-                elif name.startswith("down_blocks"):
-                    block_id = int(name[len("down_blocks.")])
-                    hidden_size = unet.config.block_out_channels[block_id]
+        for name, attn_processor in unet.attn_processors.items():
+            cross_attention_dim = (
+                None
+                if name.endswith("attn1.processor")
+                else unet.config.cross_attention_dim
+            )
+            if name.startswith("mid_block"):
+                hidden_size = unet.config.block_out_channels[-1]
+            elif name.startswith("up_blocks"):
+                block_id = int(name[len("up_blocks.")])
+                hidden_size = list(reversed(unet.config.block_out_channels))[
+                    block_id
+                ]
+            elif name.startswith("down_blocks"):
+                block_id = int(name[len("down_blocks.")])
+                hidden_size = unet.config.block_out_channels[block_id]
 
-                module = LoRAAttnProcessor2_0(
-                    hidden_size=hidden_size,
-                    cross_attention_dim=cross_attention_dim,
-                    rank=lora_rank,
-                )
-                unet_lora_attn_procs[name] = module.to("cuda")
+            module = LoRAAttnProcessor2_0(
+                hidden_size=hidden_size,
+                cross_attention_dim=cross_attention_dim,
+                rank=lora_rank,
+            )
+            unet_lora_attn_procs[name] = module.to("cuda")
 
-            unet.set_attn_processor(unet_lora_attn_procs)
+        unet.set_attn_processor(unet_lora_attn_procs)
 
     else:
         unet_path = os.path.join(lora_path, "unet.safetensors")
@@ -150,7 +155,7 @@ def patch_pipe_with_lora(pipe, lora_path):
 
     unet.load_state_dict(tensors, strict=False)
     handler = TokenEmbeddingsHandler([pipe.text_encoder, pipe.text_encoder_2], [pipe.tokenizer, pipe.tokenizer_2])
-    handler.load_embeddings(os.path.join(lora_path, "embeddings.safetensors"))
+    handler.load_embeddings(os.path.join(lora_path, f"{concept_name}_embeddings.safetensors"))
     return pipe
 
 def get_avg_lr(optimizer):
@@ -436,16 +441,21 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
         lora_tensors = unet_attn_processors_state_dict(unet)
     else:
         lora_tensors = {}
+    try:
+        concept_name = args_dict["name"].lower()
+    except:
+        concept_name = "eden_concept_lora"
 
-    save_file(lora_tensors, f"{output_dir}/lora.safetensors")
-    embedding_handler.save_embeddings(f"{output_dir}/embeddings.safetensors",)
+    # Make sure all weird delimiter characters are removed from concept_name before using it as a filepath:
+    concept_name = concept_name.replace(" ", "_").replace("/", "_").replace("\\", "_").replace(":", "_").replace("*", "_").replace("?", "_").replace("\"", "_").replace("<", "_").replace(">", "_").replace("|", "_")
+
+    save_file(lora_tensors, f"{output_dir}/{concept_name}_lora.safetensors")
+    embedding_handler.save_embeddings(f"{output_dir}/{concept_name}_embeddings.safetensors",)
 
     with open(f"{output_dir}/special_params.json", "w") as f:
         json.dump(token_dict, f)
     with open(f"{output_dir}/training_args.json", "w") as f:
         json.dump(args_dict, f, indent=4)
-
-
 
 def main(
     pretrained_model_name_or_path: Optional[str] = "./cache",
@@ -585,37 +595,36 @@ def main(
         unet.requires_grad_(False)
         unet_lora_attn_procs = {}
 
-        if prodigy_d_coef > 0.0:
-            for name, attn_processor in unet.attn_processors.items():
-                cross_attention_dim = (
-                    None
-                    if name.endswith("attn1.processor")
-                    else unet.config.cross_attention_dim
-                )
-                if name.startswith("mid_block"):
-                    hidden_size = unet.config.block_out_channels[-1]
-                elif name.startswith("up_blocks"):
-                    block_id = int(name[len("up_blocks.")])
-                    hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-                elif name.startswith("down_blocks"):
-                    block_id = int(name[len("down_blocks.")])
-                    hidden_size = unet.config.block_out_channels[block_id]
+        for name, attn_processor in unet.attn_processors.items():
+            cross_attention_dim = (
+                None
+                if name.endswith("attn1.processor")
+                else unet.config.cross_attention_dim
+            )
+            if name.startswith("mid_block"):
+                hidden_size = unet.config.block_out_channels[-1]
+            elif name.startswith("up_blocks"):
+                block_id = int(name[len("up_blocks.")])
+                hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
+            elif name.startswith("down_blocks"):
+                block_id = int(name[len("down_blocks.")])
+                hidden_size = unet.config.block_out_channels[block_id]
 
-                module = LoRAAttnProcessor2_0(
-                    hidden_size=hidden_size,
-                    cross_attention_dim=cross_attention_dim,
-                    rank=lora_rank,
-                )
+            module = LoRAAttnProcessor2_0(
+                hidden_size=hidden_size,
+                cross_attention_dim=cross_attention_dim,
+                rank=lora_rank,
+            )
 
-                # scale all the parameters inside the lora module by lora_param_scaler
-                for param in module.parameters():
-                    param.data = param.data * args_dict['lora_param_scaler']
+            # scale all the parameters inside the lora module by lora_param_scaler
+            for param in module.parameters():
+                param.data = param.data * args_dict['lora_param_scaler']
 
-                unet_lora_attn_procs[name] = module
-                module.to(device)
-                unet_lora_parameters.extend(module.parameters())
+            unet_lora_attn_procs[name] = module
+            module.to(device)
+            unet_lora_parameters.extend(module.parameters())
 
-            unet.set_attn_processor(unet_lora_attn_procs)
+        unet.set_attn_processor(unet_lora_attn_procs)
 
         print("Creating optimizer with:")
         print(f"lora_lr: {lora_lr}, lora_weight_decay: {lora_weight_decay}")
@@ -881,7 +890,7 @@ def main(
             optimizer_prod.step()
             optimizer_prod.zero_grad()
 
-            # every step, we reset the non-trainable embeddings to the original embeddings.
+            # every step, we reset the non-trainable embeddings to the original embeddings
             embedding_handler.retract_embeddings(print_stds = (global_step % 50 == 0))
             embedding_handler.fix_embedding_std(off_ratio_power)
             
