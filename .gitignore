@@ -21,5 +21,6 @@ training_out*
 trained_model.tar
 checkpoint*
 weights
+*.tar
 __*.zip
 nohup.out

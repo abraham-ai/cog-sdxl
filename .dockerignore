@@ -11,7 +11,7 @@ refiner-cache/
 safety-cache/
 
 # Misc files:
-trained_model.tar
+*.tar
 .git
 *.out
 *.png
