@@ -419,6 +419,8 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.65, n_img
     gc.collect()
     torch.cuda.empty_cache()
 
+    return validation_prompts
+
 def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_lora_parameters, unet_param_to_optimize_names):
     """
     Save the LORA model to output_dir, optionally with some example images
@@ -535,6 +537,8 @@ def main(
     #starting_toks = ["person", "face"]
     starting_toks = None
     embedding_handler.initialize_new_tokens(inserting_toks=inserting_list_tokens, starting_toks=starting_toks, seed=seed)
+    if debug:
+        embedding_handler.plot_token_embeddings(["man", "face", "woman", "foot", "born"], output_folder = output_dir)
 
     text_encoders = [text_encoder_one, text_encoder_two]
 
@@ -874,9 +878,14 @@ def main(
             if global_step % 100 == 0 and debug:
                 embedding_handler.print_token_info()
 
-            if global_step % 300 == 0 and debug:
+            if global_step % (max_train_steps//3) == 0 and debug:
                 plot_torch_hist(unet_lora_parameters, global_step, output_dir, "lora_weights", min_val=-0.3, max_val=0.3, ymax_f = 0.05)
-                plot_torch_hist(embedding_handler.get_trainable_embeddings(), global_step, output_dir, "embeddings_weights", min_val=-0.05, max_val=0.05, ymax_f = 0.05)
+                
+                token_embeddings = embedding_handler.get_trainable_embeddings()
+                for i, token_embeddings_i in enumerate(token_embeddings):
+                    plot_torch_hist(token_embeddings_i[0], global_step, output_dir, f"embeddings_weights_token_0_{i}", min_val=-0.05, max_val=0.05, ymax_f = 0.05)
+                    plot_torch_hist(token_embeddings_i[1], global_step, output_dir, f"embeddings_weights_token_1_{i}", min_val=-0.05, max_val=0.05, ymax_f = 0.05)
+                
                 plot_loss(losses, save_path=f'{output_dir}/losses.png')
                 plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
 
@@ -922,6 +931,11 @@ def main(
 
             if global_step % 100 == 0:
                 print(f" ---- avg training fps: {images_done / (time.time() - start_time):.2f}", end="\r")
+
+            if global_step % (max_train_steps//20) == 0:
+                progress = (global_step / max_train_steps) + 0.05
+                yield np.min((progress, 1.0))
+
 
     # final_save
     if (global_step - last_save_step) > 101:

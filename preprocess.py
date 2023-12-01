@@ -623,7 +623,7 @@ def load_and_save_masks_and_captions(
     if isinstance(files, str):
         if os.path.isdir(files):
             print("Scanning directory for images...")
-            # get all the .png .jpg in the directory
+            # get all the imgs the directory (everything is already converted to .jpg)
             files = (
                 _find_files("*.png", files)
                 + _find_files("*.jpg", files)

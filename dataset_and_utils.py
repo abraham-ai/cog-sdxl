@@ -15,6 +15,26 @@ from safetensors.torch import save_file
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer, PretrainedConfig
 
+import matplotlib.pyplot as plt
+def plot_torch_hist(parameters, epoch, save_dir, name, bins=100, min_val=-1, max_val=1, ymax_f = 0.75):
+    # Flatten and concatenate all parameters into a single tensor
+    all_params = torch.cat([p.data.view(-1) for p in parameters])
+
+    # Convert to CPU for plotting
+    all_params_cpu = all_params.cpu().float().numpy()
+
+    # Plot histogram
+    plt.figure()
+    plt.hist(all_params_cpu, bins=bins, density=False)
+    plt.ylim(0, ymax_f * len(all_params_cpu))
+    plt.xlim(min_val, max_val)
+    plt.xlabel('Weight Value')
+    plt.ylabel('Count')
+    plt.title(f'Epoch {epoch} {name} Histogram (std = {np.std(all_params_cpu):.4f})')
+    plt.savefig(f"{save_dir}/{name}_histogram_{epoch:04d}.png")
+    plt.close()
+
+
 def prepare_image(
     pil_image: PIL.Image.Image, w: int = 512, h: int = 512
 ) -> torch.Tensor:
@@ -345,11 +365,7 @@ class TokenEmbeddingsHandler:
         
         trainable_embeddings = []
         for idx, text_encoder in enumerate(self.text_encoders):
-            trainable_embeddings.append(
-                text_encoder.text_model.embeddings.token_embedding.weight.data[
-                    self.train_ids
-                ]
-            )
+            trainable_embeddings.append(text_encoder.text_model.embeddings.token_embedding.weight.data[self.train_ids])
 
         return trainable_embeddings
 
@@ -444,12 +460,19 @@ class TokenEmbeddingsHandler:
         
         return init_embedding
 
-    def plot_token_embeddings(self, example_tokens):
+    def plot_token_embeddings(self, example_tokens, output_folder = ".", x_range = [-0.05, 0.05]):
+        print(f"Plotting embeddings for tokens: {example_tokens}")
         idx = 0
-        for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
-            token_ids = tokenizer.convert_tokens_to_ids(self.inserting_toks)
-            
 
+        for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
+            token_ids  = tokenizer.convert_tokens_to_ids(example_tokens)
+            embeddings = text_encoder.text_model.embeddings.token_embedding.weight.data[token_ids].clone()
+
+            # plot the embeddings histogram:
+            for token_name, embedding in zip(example_tokens, embeddings):
+                plot_torch_hist(embedding, 0, output_folder, f"tok_{token_name}_{idx}", bins=100, min_val=x_range[0], max_val=x_range[1], ymax_f = 0.05)
+
+            idx += 1
 
     def initialize_new_tokens(self, 
         inserting_toks: List[str],

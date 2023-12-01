@@ -5,7 +5,7 @@ import json
 import time
 import numpy as np
 
-from cog import BasePredictor, BaseModel, File, Input, Path
+from cog import BasePredictor, BaseModel, File, Input, Path as cogPath
 from dotenv import load_dotenv
 from predict_old import SDXL_MODEL_CACHE, SDXL_URL, download_weights
 from preprocess import preprocess
@@ -21,9 +21,9 @@ def clean_filename(filename):
     return ''.join(c for c in filename if c in allowed_chars)
 
 class CogOutput(BaseModel):
-    files: list[Path]
+    files: Optional[list[cogPath]] = []
     name: Optional[str] = None
-    thumbnails: Optional[list[Path]] = []
+    thumbnails: Optional[list[cogPath]] = []
     attributes: Optional[dict] = None
     progress: Optional[float] = None
     isFinal: bool = False
@@ -214,6 +214,9 @@ class Predictor(BasePredictor):
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
         os.makedirs(output_dir)
+
+        if not debug:
+            yield CogOutput(name=name, progress=0.0)
         
         input_dir, n_imgs, trigger_text, segmentation_prompt, captions = preprocess(
             output_dir,
@@ -230,6 +233,9 @@ class Predictor(BasePredictor):
             augment_imgs_up_to_n = augment_imgs_up_to_n,
             seed = seed,
         )
+
+        if not debug:
+            yield CogOutput(name=name, progress=0.05)
 
         # Make sure we've correctly inserted the TOK into every caption:
         captions = ["TOK, " + caption if "TOK" not in caption else caption for caption in captions]
@@ -274,7 +280,7 @@ class Predictor(BasePredictor):
         with open(os.path.join(output_dir, "training_args.json"), "w") as f:
             json.dump(args_dict, f, indent=4)
 
-        output_save_dir = main(
+        train_generator = main(
             pretrained_model_name_or_path=SDXL_MODEL_CACHE,
             instance_data_dir=os.path.join(input_dir, "captions.csv"),
             output_dir=output_dir,
@@ -306,6 +312,17 @@ class Predictor(BasePredictor):
             off_ratio_power=off_ratio_power,
         )
 
+        while True:
+            try:
+                progress_f = next(train_generator)
+                if not debug:
+                    yield CogOutput(name=name, progress=np.round(progress_f, 2))
+                else:
+                    print(f"Cog progress: {progress_f}")
+            except StopIteration as e:
+                output_save_dir = e.value  # Capture the return value
+                break
+        
         runtime = time.time() - start_time
         args_dict["total_runtime"] = runtime
 
