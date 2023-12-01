@@ -924,7 +924,7 @@ def main(
                 if debug:
                     plot_loss(losses, save_path=f'{output_dir}/losses.png')
                     plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
-                    render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4, debug=debug)
+                    validation_prompts = render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4, debug=debug)
             
             images_done += train_batch_size
             global_step += 1
@@ -965,7 +965,7 @@ def main(
     gc.collect()
     torch.cuda.empty_cache()
 
-    render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4, debug=debug)
+    validation_prompts = render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4, debug=debug)
 
     return output_save_dir
 

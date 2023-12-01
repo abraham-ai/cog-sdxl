@@ -349,7 +349,7 @@ class Predictor(BasePredictor):
 
         validation_grid_img_path = os.path.join(output_save_dir, "validation_grid.jpg")
         out_path = f"{clean_filename(name)}_eden_concept_lora_{int(time.time())}.tar"
-        directory = Path(output_save_dir)
+        directory = cogPath(output_save_dir)
 
         with tarfile.open(out_path, "w") as tar:
             print("Adding files to tar...")
@@ -364,8 +364,8 @@ class Predictor(BasePredictor):
         print(f"Returning {out_path}")
 
         if DEBUG_MODE or debug:
-            yield Path(out_path)
+            yield cogPath(out_path)
         else:
             # clear the output_directory to avoid running out of space on the machine:
             #shutil.rmtree(output_dir)
-            yield CogOutput(files=[Path(out_path)], name=name, thumbnails=[Path(validation_grid_img_path)], attributes=args_dict, isFinal=True, progress=1.0)
+            yield CogOutput(files=[cogPath(out_path)], name=name, thumbnails=[cogPath(validation_grid_img_path)], attributes=args_dict, isFinal=True, progress=1.0)
