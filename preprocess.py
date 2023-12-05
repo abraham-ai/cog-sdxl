@@ -736,6 +736,11 @@ def load_and_save_masks_and_captions(
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # Make sure we've correctly inserted the TOK into every caption:
+    captions = ["TOK, " + caption if "TOK" not in caption else caption for caption in captions]
+    for caption in captions:
+        print(caption)
+
     # iterate through the images, masks, and captions and add a row to the dataframe for each
     print("Saving final training dataset...")
     for idx, (image, mask, caption) in enumerate(zip(images, seg_masks, captions)):

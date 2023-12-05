@@ -235,10 +235,7 @@ class Predictor(BasePredictor):
         )
 
         if not debug:
-            yield CogOutput(name=name, progress=0.05)
-
-        # Make sure we've correctly inserted the TOK into every caption:
-        captions = ["TOK, " + caption if "TOK" not in caption else caption for caption in captions]
+            yield CogOutput(name=name, progress=0.05)       
 
         # Make a dict of all the arguments and save it to args.json: 
         args_dict = {
@@ -322,9 +319,6 @@ class Predictor(BasePredictor):
             except StopIteration as e:
                 output_save_dir = e.value  # Capture the return value
                 break
-        
-        runtime = time.time() - start_time
-        args_dict["total_runtime"] = runtime
 
         if not debug:
             keys_to_keep = [
@@ -332,10 +326,10 @@ class Predictor(BasePredictor):
                 "checkpoint",
                 "concept_mode",
                 "input_images",
+                "num_training_images",
                 "seed",
                 "resolution",
                 "max_train_steps",
-                "total_runtime",
                 "lora_rank",
                 "trigger_text",
                 "left_right_flip_augmentation",
@@ -359,6 +353,8 @@ class Predictor(BasePredictor):
                 tar.add(file_path, arcname=arcname)
 
         attributes = args_dict
+        runtime = time.time() - start_time
+        attributes['job_time_seconds'] = runtime
 
         print(f"LORA training finished in {runtime:.1f} seconds")
         print(f"Returning {out_path}")

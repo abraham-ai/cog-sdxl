@@ -289,7 +289,7 @@ def prepare_prompt_for_lora(prompt, lora_path, interpolation=False, verbose=True
 
 
 @torch.no_grad()
-def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.65, n_imgs = 4, debug = False, device = "cuda:0"):
+def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.7, n_imgs = 4, debug = False, device = "cuda:0"):
 
     random.seed(seed)
 
