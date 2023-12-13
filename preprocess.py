@@ -77,11 +77,15 @@ def preprocess(
     crop_based_on_salience: bool,
     use_face_detection_instead: bool,
     temp: float,
-    substitution_tokens: List[str],
     left_right_flip_augmentation: bool = False,
     augment_imgs_up_to_n: int = 0,
     seed: int = 0,
 ) -> Path:
+
+    if os.path.exists(working_directory):
+        print(f"working_directory {working_directory} already existed.. deleting and recreating!")
+        shutil.rmtree(working_directory)
+    os.makedirs(working_directory)
 
     # clear TEMP_IN_DIR first.
     TEMP_IN_DIR = os.path.join(working_directory,  "images_in")
@@ -138,7 +142,6 @@ def preprocess(
         crop_based_on_salience=crop_based_on_salience,
         use_face_detection_instead=use_face_detection_instead,
         temp=temp,
-        substitution_tokens=substitution_tokens,
         add_lr_flips = left_right_flip_augmentation,
         augment_imgs_up_to_n = augment_imgs_up_to_n,
     )
@@ -437,7 +440,6 @@ def blip_captioning_dataset(
         "Salesforce/blip2-opt-2.7b",
     ] = "Salesforce/blip-image-captioning-large",
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-    substitution_tokens: Optional[List[str]] = None,
     n_samples_per_img: int = 1,
     **kwargs,
 ) -> List[str]:
@@ -465,8 +467,8 @@ def blip_captioning_dataset(
             out = model.generate(**inputs, max_length=100, do_sample=True, top_k=40, temperature=0.65)
             caption = processor.decode(out[0], skip_special_tokens=True)
             # BLIP 2 lowercases all caps tokens. This should properly replace them w/o messing up subwords.
-            for token in substitution_tokens:
-                caption = caption.replace(f" {token.lower()} ", f" {token} ")
+            #for token in substitution_tokens:
+            #    caption = caption.replace(f" {token.lower()} ", f" {token} ")
         else:
             caption = input_captions[i]
         captions.append(caption)
@@ -608,7 +610,6 @@ def load_and_save_masks_and_captions(
     use_face_detection_instead: bool = False,
     temp: float = 1.0,
     n_length: int = -1,
-    substitution_tokens: Optional[List[str]] = None,
     add_lr_flips: bool = False,
     augment_imgs_up_to_n: int = 0,
     use_dataset_captions: bool = True, # load captions from the dataset if they exist
@@ -669,7 +670,7 @@ def load_and_save_masks_and_captions(
 
     # Use BLIP for autocaptioning:
     print(f"Generating {len(images)} captions using mode: {concept_mode}...")
-    captions = blip_captioning_dataset(images, captions,  substitution_tokens=substitution_tokens)
+    captions = blip_captioning_dataset(images, captions)
 
     # Cleanup prompts using chatgpt:
     captions, trigger_text, gpt_concept_name = post_process_captions(captions, caption_text, concept_mode, seed)

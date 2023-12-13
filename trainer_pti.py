@@ -27,14 +27,11 @@ from dataset_and_utils import (
     unet_attn_processors_state_dict
 )
 
-from io_utils import make_validation_img_grid, download_and_prep_training_data
-from predict_old import SDXL_MODEL_CACHE
+from io_utils import make_validation_img_grid, download_and_prep_training_data, SDXL_MODEL_CACHE, SDXL_URL
 from diffusers import StableDiffusionXLPipeline
 from safetensors.torch import load_file
 
 import matplotlib.pyplot as plt
-
-
 
 def compute_snr(noise_scheduler, timesteps):
     """
@@ -537,8 +534,9 @@ def main(
     #starting_toks = ["person", "face"]
     starting_toks = None
     embedding_handler.initialize_new_tokens(inserting_toks=inserting_list_tokens, starting_toks=starting_toks, seed=seed)
-    if debug:
-        embedding_handler.plot_token_embeddings(["man", "face", "woman", "foot", "born"], output_folder = output_dir)
+    
+    #if debug:
+    #    embedding_handler.plot_token_embeddings(["man", "face", "woman", "foot", "born"], output_folder = output_dir)
 
     text_encoders = [text_encoder_one, text_encoder_two]
 
