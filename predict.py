@@ -4,6 +4,8 @@ import tarfile
 import json
 import time
 import numpy as np
+import pandas as pd
+from collections import OrderedDict
 
 from cog import BasePredictor, BaseModel, File, Input, Path as cogPath
 from dotenv import load_dotenv
@@ -19,6 +21,87 @@ load_dotenv()
 def clean_filename(filename):
     allowed_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
     return ''.join(c for c in filename if c in allowed_chars)
+
+from math import gcd
+def scm(a, b):
+    """Calculate the smallest common multiple."""
+    return a * b // gcd(a, b)
+
+import re
+def rename_file(filename, offset):
+    match = re.match(r'(\d+)(\..+)', filename)
+    if match:
+        number_part = int(match.group(1)) + offset
+        rest_part = match.group(2)
+        return f"{number_part}{rest_part}"
+    return filename
+
+def duplicate_samples(path, target_count):
+    """Duplicate samples in the dataset to reach the target count."""
+    original_files = [name for name in os.listdir(path) if name.endswith('.src.jpg') or name.endswith('.mask.jpg')]
+    current_count = len([name for name in original_files if name.endswith('.src.jpg')])
+    times_to_duplicate = target_count // current_count
+
+    captions_path = os.path.join(path, 'captions.csv')
+    captions = pd.read_csv(captions_path)
+
+    for i in range(1, times_to_duplicate):
+        for filename in original_files:
+            if filename.endswith('.src.jpg') or filename.endswith('.mask.jpg'):
+                src = os.path.join(path, filename)
+                new_filename = rename_file(filename, i * current_count)
+                dest = os.path.join(path, new_filename)
+                shutil.copy(src, dest)
+
+                # Duplicate the caption in the captions.csv file
+                if filename.endswith('.src.jpg'):
+                    caption_row = captions[captions['image_path'] == filename]
+                    if not caption_row.empty:
+                        caption = caption_row['caption'].values[0]
+                        new_mask_path = new_filename.replace('.src.jpg', '.mask.jpg')
+                        new_row = pd.DataFrame({'image_path': [new_filename], 'mask_path': [new_mask_path], 'caption': [caption]})
+                        captions = pd.concat([captions, new_row], ignore_index=True)
+
+    # Save the updated captions outside the loop to improve efficiency
+    captions.to_csv(captions_path, index=False)
+
+def merge_datasets(path_A, path_B, out_path, token_names):
+    if not os.path.exists(out_path):
+        os.makedirs(out_path)
+
+    # Calculate the SCM of the number of samples in A and B
+    count_A = len([name for name in os.listdir(path_A) if name.endswith('.src.jpg')])
+    count_B = len([name for name in os.listdir(path_B) if name.endswith('.src.jpg')])
+    target_count = scm(count_A, count_B)
+    print(f"Duplicating samples to reach {target_count} samples (from {count_A} and {count_B})")
+
+    # Duplicate samples to match the target_count
+    duplicate_samples(path_A, target_count)
+    duplicate_samples(path_B, target_count)
+
+    # Determine file offset based on the number of files in A
+    offset = len([name for name in os.listdir(path_A) if name.endswith('.src.jpg')])
+
+    # Copy and rename files from A and B to C
+    for path in [path_A, path_B]:
+        for filename in os.listdir(path):
+            src = os.path.join(path, filename)
+            dest = os.path.join(out_path, rename_file(filename, offset) if path == path_B else filename)
+            shutil.copy(src, dest)
+
+    # Combine captions
+    captions_A = pd.read_csv(os.path.join(path_A, 'captions.csv'))
+    captions_B = pd.read_csv(os.path.join(path_B, 'captions.csv'))
+    captions_B['image_path'] = captions_B['image_path'].apply(lambda x: rename_file(x, offset))
+    captions_B['mask_path'] = captions_B['mask_path'].apply(lambda x: rename_file(x, offset))
+
+    # Replace the "TOK" token in the 'caption' column with the actual token_name
+    token_names = list(token_names)
+    captions_A['caption'] = captions_A['caption'].apply(lambda x: x.replace('TOK', token_names[0]))
+    captions_B['caption'] = captions_B['caption'].apply(lambda x: x.replace('TOK', token_names[1]))
+
+    combined_captions = pd.concat([captions_A, captions_B])
+    combined_captions.to_csv(os.path.join(out_path, 'captions.csv'), index=False)
 
 class CogOutput(BaseModel):
     files: Optional[list[cogPath]] = []
@@ -125,6 +208,10 @@ class Predictor(BasePredictor):
             description="Apply data augmentation (no lr-flipping) until there are n training samples (0 disables augmentation completely)",
             default=20,
         ),
+        n_tokens: int = Input(
+            description="How many new tokens to inject per concept",
+            default=2,
+        ),
         mask_target_prompts: str = Input(
             description="Prompt that describes most important part of the image, will be used for CLIP-segmentation. For example, if you are learning a person 'face' would be a good segmentation prompt",
             default=None,
@@ -195,9 +282,10 @@ class Predictor(BasePredictor):
             download_weights(SDXL_URL, SDXL_MODEL_CACHE)
 
         # hardcoded for now:
-        token_list = ["TOK:2"]
+        token_list = [f"TOK:{n_tokens}"]
+        #token_list = ["TOK1:2", "TOK2:2"]
 
-        token_dict = {}
+        token_dict = OrderedDict({})
         all_token_lists = []
         running_tok_cnt = 0
         for token in token_list:
@@ -208,22 +296,89 @@ class Predictor(BasePredictor):
             all_token_lists.extend(special_tokens)
             running_tok_cnt += n_tok
 
-        output_dir = os.path.join(out_root_dir, run_name)
-        
-        input_dir, n_imgs, trigger_text, segmentation_prompt, captions = preprocess(
-            output_dir,
-            concept_mode,
-            input_zip_path=lora_training_urls,
-            caption_text=caption_prefix,
-            mask_target_prompts=mask_target_prompts,
-            target_size=resolution,
-            crop_based_on_salience=crop_based_on_salience,
-            use_face_detection_instead=use_face_detection_instead,
-            temp=clipseg_temperature,
-            left_right_flip_augmentation=left_right_flip_augmentation,
-            augment_imgs_up_to_n = augment_imgs_up_to_n,
-            seed = seed,
-        )
+        if 0:
+            # overwrite some settings for experimentation:
+            lora_param_scaler = 0.1
+            l1_penalty = 0.2
+            prodigy_d_coef = 0.2
+            ti_lr = 1e-3
+            lora_rank = 24
+
+            lora_training_urls = "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/plantoid_5.zip"
+            concept_mode = "object"
+            mask_target_prompts = ""
+            left_right_flip_augmentation = True
+
+            output_dir1 = os.path.join(out_root_dir, run_name + "_xander")
+            input_dir1, n_imgs1, trigger_text1, segmentation_prompt1, captions1 = preprocess(
+                output_dir1,
+                concept_mode,
+                input_zip_path=lora_training_urls,
+                caption_text=caption_prefix,
+                mask_target_prompts=mask_target_prompts,
+                target_size=resolution,
+                crop_based_on_salience=crop_based_on_salience,
+                use_face_detection_instead=use_face_detection_instead,
+                temp=clipseg_temperature,
+                left_right_flip_augmentation=left_right_flip_augmentation,
+                augment_imgs_up_to_n = augment_imgs_up_to_n,
+                seed = seed,
+            )
+
+            lora_training_urls = "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/gene_5.zip"
+            concept_mode = "face"
+            mask_target_prompts = "face"
+            left_right_flip_augmentation = False
+
+            output_dir2 = os.path.join(out_root_dir, run_name + "_gene")
+            input_dir2, n_imgs2, trigger_text2, segmentation_prompt2, captions2 = preprocess(
+                output_dir2,
+                concept_mode,
+                input_zip_path=lora_training_urls,
+                caption_text=caption_prefix,
+                mask_target_prompts=mask_target_prompts,
+                target_size=resolution,
+                crop_based_on_salience=crop_based_on_salience,
+                use_face_detection_instead=use_face_detection_instead,
+                temp=clipseg_temperature,
+                left_right_flip_augmentation=left_right_flip_augmentation,
+                augment_imgs_up_to_n = augment_imgs_up_to_n,
+                seed = seed,
+            )
+            
+
+            # Merge the two preprocessing steps:
+            n_imgs = n_imgs1 + n_imgs2
+            captions = captions1 + captions2
+            trigger_text = trigger_text1
+            segmentation_prompt = segmentation_prompt1
+
+            # Create merged outdir:
+            output_dir = os.path.join(out_root_dir, run_name + "_combined")
+            input_dir  = os.path.join(output_dir, "images_out")
+            os.makedirs(input_dir, exist_ok=True)
+
+            # Merge the two preprocessed datasets:
+            merge_datasets(input_dir1, input_dir2, input_dir, token_dict.keys())
+
+        else: # normal, single token run:
+            
+            output_dir = os.path.join(out_root_dir, run_name)
+            input_dir, n_imgs, trigger_text, segmentation_prompt, captions = preprocess(
+                output_dir,
+                concept_mode,
+                input_zip_path=lora_training_urls,
+                caption_text=caption_prefix,
+                mask_target_prompts=mask_target_prompts,
+                target_size=resolution,
+                crop_based_on_salience=crop_based_on_salience,
+                use_face_detection_instead=use_face_detection_instead,
+                temp=clipseg_temperature,
+                left_right_flip_augmentation=left_right_flip_augmentation,
+                augment_imgs_up_to_n = augment_imgs_up_to_n,
+                seed = seed,
+            )
+
 
         if not debug:
             yield CogOutput(name=name, progress=0.05)       
@@ -341,6 +496,9 @@ class Predictor(BasePredictor):
                 print(file_path)
                 arcname = file_path.relative_to(directory)
                 tar.add(file_path, arcname=arcname)
+
+            # Add instructions README:
+            tar.add("instructions_README.md", arcname="README.md")
 
         attributes = args_dict
         runtime = time.time() - start_time

@@ -448,8 +448,26 @@ class TokenEmbeddingsHandler:
             for i, row in enumerate(l2_distance_matrix):
                 print(f"{example_tokens[i]}\t" + "\t".join(f"{dist:.4f}" for dist in row))
 
+
+        # We're working in cosine-similarity space
+        # So first, renormalize the embeddings to have norm 1
+        embedding_norms = torch.norm(embeddings, dim=-1, keepdim=True)
+        embeddings = embeddings / embedding_norms
+
+        print(f"embedding norms pre normalization:")
+        print(embedding_norms)
+        print(f"embedding norms post normalization:")
+        print(torch.norm(embeddings, dim=-1, keepdim=True))
+
         print(f"Using {len(embeddings)} embeddings to compute initial embedding...")
         init_embedding = embeddings.mean(dim=0)
+        # normalize the init_embedding to have norm 1:
+        init_embedding = init_embedding / torch.norm(init_embedding)
+
+        # rescale the init_embedding to have the same std as the average of the embeddings:
+        init_embedding = init_embedding * embedding_norms.mean()
+
+        print(f"init_embedding norm: {torch.norm(init_embedding):.4f}, std: {init_embedding.std():.4f}, mean: {init_embedding.mean():.4f}")
 
         if (desired_std_multiplier is not None) and desired_std_multiplier > 0:
             avg_std        = torch.stack(stds).mean()
@@ -538,23 +556,21 @@ class TokenEmbeddingsHandler:
                     init_embeddings = (torch.randn(len(self.train_ids), text_encoder.text_model.config.hidden_size).to(device=self.device).to(dtype=self.dtype) * std_token_embedding)
                 else:
                     first_tokens = [
-                        "face",
-                        "person",
-                        "Aiden",
                         "Sophia",
                         "Liam",
-                        "Isabella",
                         "Ethan",
-                        "Emma",
                         "Lucas",
                         "Olivia",
                         "Noah",
-                        "Ava",
+                        "John",
+                        "David",
+                        "James",
+                        "Robert",
+                        "Michael",
+                        "William",
                     ]
 
                     second_tokens = [
-                        "face",
-                        "person",
                         "Smith",
                         "Johnson",
                         "Williams",
@@ -564,12 +580,21 @@ class TokenEmbeddingsHandler:
                         "Miller",
                         "Davis",
                         "Rodriguez",
-                        "Martinez",
+                        "Carter",
+                        "Trump",
+                        "Clinton",
+                        "Wilson",
+                        "Harris",
+                        "Lewis",
+                        "Scott"
                     ]
 
-                    start_embedding_one = self.get_start_embedding(text_encoder, tokenizer, first_tokens)
-                    start_embedding_two = self.get_start_embedding(text_encoder, tokenizer, second_tokens)
-                    init_embeddings = torch.stack([start_embedding_one, start_embedding_two])
+                    self.anchor_embedding_one = self.get_start_embedding(text_encoder, tokenizer, first_tokens)
+                    self.anchor_embedding_two = self.get_start_embedding(text_encoder, tokenizer, second_tokens)
+                    self.anchor_embedding_three = self.get_start_embedding(text_encoder, tokenizer, first_tokens)
+                    self.anchor_embedding_four = self.get_start_embedding(text_encoder, tokenizer, second_tokens)
+
+                    init_embeddings = torch.stack([self.anchor_embedding_one, self.anchor_embedding_two, self.anchor_embedding_three, self.anchor_embedding_four])
 
                     print(f"init_embedding std: {init_embeddings.std():.4f}, avg-std: {std_token_embedding:.4f}")
 
@@ -586,12 +611,6 @@ class TokenEmbeddingsHandler:
             self.embeddings_settings[f"index_no_updates_{idx}"] = inu
 
             idx += 1
-            
-
-    #############################################################################################################
-    #############################################################################################################
-    #############################################################################################################
-
 
     def pre_optimize_token_embeddings(self, train_dataset, epochs=10):
 

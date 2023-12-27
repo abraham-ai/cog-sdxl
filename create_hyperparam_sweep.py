@@ -40,11 +40,11 @@ https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets
 
 # Setup the base experiment config:
 #lora_training_urls    = "https://minio.aws.abraham.fun/creations-stg/d6f8446d13a82bc159f4b26aadca90a888493e92cf0bab1e510cb5354fb065a7.zip|https://minio.aws.abraham.fun/creations-stg/991d70ba870022aef6c893b8335fee53ed9a32e8f998e23ec9dcf2adc0ee3f76.zip|https://minio.aws.abraham.fun/creations-stg/6b25015c2f655915c90c41fc35cc5f42f8a877307c2a8affc2d47ed812cf23c3.zip|https://minio.aws.abraham.fun/creations-stg/fbdc59246ee841bb8303787155a6a0c5cae56d7545a9bd0d5d077a9d8193baff.zip"
-run_name             = "ti_tiny_lora"
+run_name             = "n_tokens"
 caption_prefix       = ""  # "" to activate chatgpt
 mask_target_prompts  = ""  # "" to activate chatgpt
 n_exp                = 300  # how many random experiment settings to generate
-min_hamming_distance = 2   # min_n_params that have to be different from any previous experiment to be scheduled
+min_hamming_distance = 1   # min_n_params that have to be different from any previous experiment to be scheduled
 
 # Define training hyperparameters and their possible values
 # The params are sampled stochastically, so if you want to use a specific value more often, just put it in multiple times
@@ -92,23 +92,24 @@ else:
     hyperparameters = {
         'lora_training_urls': [
             "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/steel.zip",
-            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/mam.zip",
-            #"https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_best.zip"
+            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_5.zip",
+            "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/mira.zip"
         ],
         'concept_mode': ['face'],
         'left_right_flip_augmentation': ['False'],
         'caption_prefix': ["a photo of TOK"],
         'augment_imgs_up_to_n': ['20'],
-        'resolution': [896, 1024],
+        'resolution': [960],
         'hard_pivot': ['False'],
         'lora_weight_decay': ['0.002'],
-        'lora_param_scaler': ['1.0', '0.3', '0.1'],
+        'lora_param_scaler': ['0.25'],
         'l1_penalty': ['0.1'],
-        'lora_rank': ['12', '24'],
-        'prodigy_d_coef': ['1.0', '0.5'],
+        'lora_rank': ['12'],
+        'prodigy_d_coef': ['0.8'],
         'max_train_steps': ['600'],
         'checkpointing_steps': ['700'],
         'train_batch_size': ['4'],
+        'n_tokens': ['1', '2', '4'],
         'seed': ['0'],
         'debug': ['True']   # avoid sending the entire .rar file back after each training run (takes a long time)
         }

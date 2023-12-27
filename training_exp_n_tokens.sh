@@ -1,0 +1,198 @@
+cog predict \
+    -i run_name="n_tokens_mira.zip_001_5955" -i caption_prefix="" \
+    -i mask_target_prompts="" \
+    -i augment_imgs_up_to_n="20" \
+    -i caption_prefix="a photo of TOK" \
+    -i checkpointing_steps="700" \
+    -i concept_mode="face" \
+    -i debug="True" \
+    -i hard_pivot="False" \
+    -i l1_penalty="0.1" \
+    -i left_right_flip_augmentation="False" \
+    -i lora_param_scaler="0.25" \
+    -i lora_rank="12" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/mira.zip" \
+    -i lora_weight_decay="0.002" \
+    -i max_train_steps="600" \
+    -i n_tokens="4" \
+    -i prodigy_d_coef="0.8" \
+    -i resolution=960 \
+    -i seed="0" \
+    -i train_batch_size="4"  
+
+cog predict \
+    -i run_name="n_tokens_steel.zip_000_5955" -i caption_prefix="" \
+    -i mask_target_prompts="" \
+    -i augment_imgs_up_to_n="20" \
+    -i caption_prefix="a photo of TOK" \
+    -i checkpointing_steps="700" \
+    -i concept_mode="face" \
+    -i debug="True" \
+    -i hard_pivot="False" \
+    -i l1_penalty="0.1" \
+    -i left_right_flip_augmentation="False" \
+    -i lora_param_scaler="0.25" \
+    -i lora_rank="12" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/steel.zip" \
+    -i lora_weight_decay="0.002" \
+    -i max_train_steps="600" \
+    -i n_tokens="2" \
+    -i prodigy_d_coef="0.8" \
+    -i resolution=960 \
+    -i seed="0" \
+    -i train_batch_size="4"  
+
+cog predict \
+    -i run_name="n_tokens_xander_5.zip_002_5955" -i caption_prefix="" \
+    -i mask_target_prompts="" \
+    -i augment_imgs_up_to_n="20" \
+    -i caption_prefix="a photo of TOK" \
+    -i checkpointing_steps="700" \
+    -i concept_mode="face" \
+    -i debug="True" \
+    -i hard_pivot="False" \
+    -i l1_penalty="0.1" \
+    -i left_right_flip_augmentation="False" \
+    -i lora_param_scaler="0.25" \
+    -i lora_rank="12" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_5.zip" \
+    -i lora_weight_decay="0.002" \
+    -i max_train_steps="600" \
+    -i n_tokens="2" \
+    -i prodigy_d_coef="0.8" \
+    -i resolution=960 \
+    -i seed="0" \
+    -i train_batch_size="4"  
+
+cog predict \
+    -i run_name="n_tokens_xander_5.zip_003_5956" -i caption_prefix="" \
+    -i mask_target_prompts="" \
+    -i augment_imgs_up_to_n="20" \
+    -i caption_prefix="a photo of TOK" \
+    -i checkpointing_steps="700" \
+    -i concept_mode="face" \
+    -i debug="True" \
+    -i hard_pivot="False" \
+    -i l1_penalty="0.1" \
+    -i left_right_flip_augmentation="False" \
+    -i lora_param_scaler="0.25" \
+    -i lora_rank="12" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_5.zip" \
+    -i lora_weight_decay="0.002" \
+    -i max_train_steps="600" \
+    -i n_tokens="4" \
+    -i prodigy_d_coef="0.8" \
+    -i resolution=960 \
+    -i seed="0" \
+    -i train_batch_size="4"  
+
+cog predict \
+    -i run_name="n_tokens_steel.zip_004_5956" -i caption_prefix="" \
+    -i mask_target_prompts="" \
+    -i augment_imgs_up_to_n="20" \
+    -i caption_prefix="a photo of TOK" \
+    -i checkpointing_steps="700" \
+    -i concept_mode="face" \
+    -i debug="True" \
+    -i hard_pivot="False" \
+    -i l1_penalty="0.1" \
+    -i left_right_flip_augmentation="False" \
+    -i lora_param_scaler="0.25" \
+    -i lora_rank="12" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/steel.zip" \
+    -i lora_weight_decay="0.002" \
+    -i max_train_steps="600" \
+    -i n_tokens="1" \
+    -i prodigy_d_coef="0.8" \
+    -i resolution=960 \
+    -i seed="0" \
+    -i train_batch_size="4"  
+
+cog predict \
+    -i run_name="n_tokens_mira.zip_005_5956" -i caption_prefix="" \
+    -i mask_target_prompts="" \
+    -i augment_imgs_up_to_n="20" \
+    -i caption_prefix="a photo of TOK" \
+    -i checkpointing_steps="700" \
+    -i concept_mode="face" \
+    -i debug="True" \
+    -i hard_pivot="False" \
+    -i l1_penalty="0.1" \
+    -i left_right_flip_augmentation="False" \
+    -i lora_param_scaler="0.25" \
+    -i lora_rank="12" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/mira.zip" \
+    -i lora_weight_decay="0.002" \
+    -i max_train_steps="600" \
+    -i n_tokens="2" \
+    -i prodigy_d_coef="0.8" \
+    -i resolution=960 \
+    -i seed="0" \
+    -i train_batch_size="4"  
+
+cog predict \
+    -i run_name="n_tokens_mira.zip_006_5957" -i caption_prefix="" \
+    -i mask_target_prompts="" \
+    -i augment_imgs_up_to_n="20" \
+    -i caption_prefix="a photo of TOK" \
+    -i checkpointing_steps="700" \
+    -i concept_mode="face" \
+    -i debug="True" \
+    -i hard_pivot="False" \
+    -i l1_penalty="0.1" \
+    -i left_right_flip_augmentation="False" \
+    -i lora_param_scaler="0.25" \
+    -i lora_rank="12" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/mira.zip" \
+    -i lora_weight_decay="0.002" \
+    -i max_train_steps="600" \
+    -i n_tokens="1" \
+    -i prodigy_d_coef="0.8" \
+    -i resolution=960 \
+    -i seed="0" \
+    -i train_batch_size="4"  
+
+cog predict \
+    -i run_name="n_tokens_xander_5.zip_007_5958" -i caption_prefix="" \
+    -i mask_target_prompts="" \
+    -i augment_imgs_up_to_n="20" \
+    -i caption_prefix="a photo of TOK" \
+    -i checkpointing_steps="700" \
+    -i concept_mode="face" \
+    -i debug="True" \
+    -i hard_pivot="False" \
+    -i l1_penalty="0.1" \
+    -i left_right_flip_augmentation="False" \
+    -i lora_param_scaler="0.25" \
+    -i lora_rank="12" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_5.zip" \
+    -i lora_weight_decay="0.002" \
+    -i max_train_steps="600" \
+    -i n_tokens="1" \
+    -i prodigy_d_coef="0.8" \
+    -i resolution=960 \
+    -i seed="0" \
+    -i train_batch_size="4"  
+
+cog predict \
+    -i run_name="n_tokens_steel.zip_008_5965" -i caption_prefix="" \
+    -i mask_target_prompts="" \
+    -i augment_imgs_up_to_n="20" \
+    -i caption_prefix="a photo of TOK" \
+    -i checkpointing_steps="700" \
+    -i concept_mode="face" \
+    -i debug="True" \
+    -i hard_pivot="False" \
+    -i l1_penalty="0.1" \
+    -i left_right_flip_augmentation="False" \
+    -i lora_param_scaler="0.25" \
+    -i lora_rank="12" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/steel.zip" \
+    -i lora_weight_decay="0.002" \
+    -i max_train_steps="600" \
+    -i n_tokens="4" \
+    -i prodigy_d_coef="0.8" \
+    -i resolution=960 \
+    -i seed="0" \
+    -i train_batch_size="4"  
+

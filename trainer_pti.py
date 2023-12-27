@@ -846,7 +846,15 @@ def main(
             # Compute the loss:
             if snr_gamma is None:
                 loss = (model_pred - noise).pow(2) * mask
+
+                if 1: # modulate loss by the inverse of the mask's mean value
+                    mean_mask_values = mask.mean(dim=list(range(1, len(loss.shape))))
+                    mean_mask_values = mean_mask_values / mean_mask_values.mean()
+                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) / mean_mask_values
+
+                # Average the normalized errors across the batch
                 loss = loss.mean()
+
             else:
                 # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                 # Since we predict the noise instead of x_0, the original formulation is slightly changed.
@@ -865,6 +873,12 @@ def main(
                 mse_loss_weights = mse_loss_weights / mse_loss_weights.mean()
                 loss = (model_pred - noise).pow(2) * mask
                 loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
+
+                if 1: # modulate loss by the inverse of the mask's mean value
+                    mean_mask_values = mask.mean(dim=list(range(1, len(loss.shape))))
+                    mean_mask_values = mean_mask_values / mean_mask_values.mean()
+                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) / mean_mask_values
+
                 loss = loss.mean()
 
             if l1_penalty > 0.0:
