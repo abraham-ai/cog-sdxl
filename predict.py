@@ -12,7 +12,13 @@ from dotenv import load_dotenv
 from preprocess import preprocess
 from trainer_pti import main
 from typing import Iterator, Optional
-from io_utils import SDXL_MODEL_CACHE, SDXL_URL, download_weights
+from io_utils import SDXL_MODEL_CACHE, SDXL_URL, SD15_MODEL_CACHE, SD15_URL, download_weights
+
+# Define model paths and URLs in a dictionary
+MODEL_INFO = {
+    "sdxl": {"path": SDXL_MODEL_CACHE, "url": SDXL_URL},
+    "sd15": {"path": SD15_MODEL_CACHE, "url": SD15_URL}
+}
 
 DEBUG_MODE = False
 
@@ -132,6 +138,10 @@ class Predictor(BasePredictor):
             description=" 'face' / 'style' / 'object' (default)",
             default="object",
         ),
+        sd_model_version: str = Input(
+            description=" 'sdxl' / 'sd15' ",
+            default="sdxl",
+        ),
         seed: int = Input(
             description="Random seed for reproducible training. Leave empty to use a random seed",
             default=None,
@@ -249,7 +259,7 @@ class Predictor(BasePredictor):
     ) -> Iterator[GENERATOR_OUTPUT_TYPE]:
 
         """
-        lambda @1024 training speed:
+        lambda @1024 training speed (SDXL):
         bs=2: 3.5 imgs/s, 1.8 batches/s
         bs=3: 5.1 imgs/s
         bs=4: 6.0 imgs/s,
@@ -278,9 +288,14 @@ class Predictor(BasePredictor):
         if not debug:
             yield CogOutput(name=name, progress=0.0)
 
-        if not os.path.exists(SDXL_MODEL_CACHE):
-            download_weights(SDXL_URL, SDXL_MODEL_CACHE)
+        # Initialize pretrained_model dictionary
+        pretrained_model = {"version": sd_model_version}
+        pretrained_model.update(MODEL_INFO[pretrained_model['version']])
 
+        # Download the weights if they don't exist locally
+        if not os.path.exists(pretrained_model['path']):
+            download_weights(pretrained_model['url'], pretrained_model['path'])
+        
         # hardcoded for now:
         token_list = [f"TOK:{n_tokens}"]
         #token_list = ["TOK1:2", "TOK2:2"]
@@ -423,7 +438,7 @@ class Predictor(BasePredictor):
             json.dump(args_dict, f, indent=4)
 
         train_generator = main(
-            pretrained_model_name_or_path=SDXL_MODEL_CACHE,
+            pretrained_model,
             instance_data_dir=os.path.join(input_dir, "captions.csv"),
             output_dir=output_dir,
             seed=seed,
@@ -459,8 +474,6 @@ class Predictor(BasePredictor):
                 progress_f = next(train_generator)
                 if not debug:
                     yield CogOutput(name=name, progress=np.round(progress_f, 2))
-                else:
-                    print(f"Cog progress: {progress_f}")
             except StopIteration as e:
                 output_save_dir = e.value  # Capture the return value
                 break

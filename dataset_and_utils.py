@@ -128,6 +128,9 @@ class PreprocessedDataset(Dataset):
         else:
             self.do_cache = False
 
+    def __len__(self) -> int:
+        return len(self.data)
+
     @torch.no_grad()
     def _process(
         self, idx: int
@@ -152,16 +155,19 @@ class PreprocessedDataset(Dataset):
             truncation=True,
             add_special_tokens=True,
             return_tensors="pt",
-        ).input_ids
+        ).input_ids.squeeze()
 
-        ti2 = self.tokenizer_2(
-            caption,
-            padding="max_length",
-            max_length=77,
-            truncation=True,
-            add_special_tokens=True,
-            return_tensors="pt",
-        ).input_ids
+        if self.tokenizer_2 is None:
+            ti2 = None
+        else:
+            ti2 = self.tokenizer_2(
+                caption,
+                padding="max_length",
+                max_length=77,
+                truncation=True,
+                add_special_tokens=True,
+                return_tensors="pt",
+            ).input_ids.squeeze()
 
         vae_latent = self.vae_encoder.encode(image).latent_dist.sample()
 
@@ -190,10 +196,10 @@ class PreprocessedDataset(Dataset):
 
         assert len(mask.shape) == 4 and len(vae_latent.shape) == 4
 
-        return (ti1.squeeze(), ti2.squeeze()), vae_latent.squeeze(), mask.squeeze()
-
-    def __len__(self) -> int:
-        return len(self.data)
+        if ti2 is None: # sd15
+            return ti1, vae_latent.squeeze(), mask.squeeze()
+        else: # sdxl
+            return (ti1, ti2), vae_latent.squeeze(), mask.squeeze()
 
     def atidx(
         self, idx: int
@@ -229,96 +235,47 @@ def import_model_class_from_model_name_or_path(
     else:
         raise ValueError(f"{model_class} is not supported.")
 
+def load_models(pretrained_model, device, weight_dtype):
+    if not isinstance(pretrained_model, dict) or 'path' not in pretrained_model or 'version' not in pretrained_model:
+        raise ValueError("pretrained_model must be a dict with 'path' and 'version' keys")
 
-def load_models(pretrained_model_name_or_path, revision, device, weight_dtype):
+    print(f"Loading model weights from {pretrained_model['path']}...")
 
-    if "juggernaut" not in pretrained_model_name_or_path:
-        print("Loading base SDXL...")
-        tokenizer_one = AutoTokenizer.from_pretrained(
-            pretrained_model_name_or_path,
-            subfolder="tokenizer",
-            revision=revision,
-            use_fast=False,
-        )
-        tokenizer_two = AutoTokenizer.from_pretrained(
-            pretrained_model_name_or_path,
-            subfolder="tokenizer_2",
-            revision=revision,
-            use_fast=False,
-        )
-
-        # Load scheduler and models
-        noise_scheduler = DDPMScheduler.from_pretrained(
-            pretrained_model_name_or_path, subfolder="scheduler"
-        )
-        # import correct text encoder classes
-        text_encoder_cls_one = import_model_class_from_model_name_or_path(
-            pretrained_model_name_or_path, revision
-        )
-        text_encoder_cls_two = import_model_class_from_model_name_or_path(
-            pretrained_model_name_or_path, revision, subfolder="text_encoder_2"
-        )
-        text_encoder_one = text_encoder_cls_one.from_pretrained(
-            pretrained_model_name_or_path, subfolder="text_encoder", revision=revision
-        )
-        text_encoder_two = text_encoder_cls_two.from_pretrained(
-            pretrained_model_name_or_path, subfolder="text_encoder_2", revision=revision
-        )
-        vae = AutoencoderKL.from_pretrained(
-            pretrained_model_name_or_path, subfolder="vae", revision=revision
-        )
-        unet = UNet2DConditionModel.from_pretrained(
-            pretrained_model_name_or_path, subfolder="unet", revision=revision
-        )
-
-    if "juggernaut" in pretrained_model_name_or_path:
-        print(f"Loading model weights from {pretrained_model_name_or_path}...")
-        pipe = StableDiffusionPipeline.from_single_file(
-                    pretrained_model_name_or_path, torch_dtype=torch.float16, use_safetensors=True)
-
-        # Use fixed scheduler for training:
-        noise_scheduler = DDPMScheduler(
-            beta_end = 0.012,
-            beta_schedule = "scaled_linear",
-            beta_start = 0.00085,
-            clip_sample = False,
-            clip_sample_range = 1.0,
-            dynamic_thresholding_ratio = 0.995,
-            #"interpolation_type": "linear",
-            num_train_timesteps = 1000,
-            prediction_type = "epsilon",
-            sample_max_value = 1.0,
-            #set_alpha_to_one = False,
-            #"skip_prk_steps": true,
-            steps_offset = 1,
-            thresholding = False,
-            timestep_spacing = "leading",
-            #"trained_betas": null,
-            #"use_karras_sigmas": false,
-            variance_type = "fixed_small"
-            )
-        
-        # Extract the submodules from the model:
+    try:
+        if pretrained_model['path'].endswith('.safetensors'):
+            pipe = StableDiffusionPipeline.from_single_file(
+                pretrained_model['path'], torch_dtype=torch.float16, use_safetensors=True)
+        else:
+            pipe = StableDiffusionPipeline.from_pretrained(
+                pretrained_model['path'], torch_dtype=torch.float16, use_safetensors=True)
+         
+        noise_scheduler = DDPMScheduler.from_config(pipe.scheduler.config)
         vae = pipe.vae
-        tokenizer_one = pipe.tokenizer
-        tokenizer_two = pipe.tokenizer_2
-        text_encoder_one = pipe.text_encoder
-        text_encoder_two = pipe.text_encoder_2
         unet = pipe.unet
+        tokenizer_one = pipe.tokenizer
+        text_encoder_one = pipe.text_encoder
 
+        vae.requires_grad_(False)
+        text_encoder_one.requires_grad_(False)
+
+        unet.to(device, dtype=weight_dtype)
+        vae.to(device, dtype=torch.float32)
+        text_encoder_one.to(device, dtype=weight_dtype)
+
+        tokenizer_two = text_encoder_two = None
+        if pretrained_model['version'] == "sdxl":
+            tokenizer_two = pipe.tokenizer_2
+            text_encoder_two = pipe.text_encoder_2
+            text_encoder_two.requires_grad_(False)
+            text_encoder_two.to(device, dtype=weight_dtype)
+        
         del pipe
+        gc.collect()
+        torch.cuda.empty_cache()
 
-    vae.requires_grad_(False)
-    text_encoder_one.requires_grad_(False)
-    text_encoder_two.requires_grad_(False)
-
-    unet.to(device, dtype=weight_dtype)
-    vae.to(device, dtype=torch.float32)
-    text_encoder_one.to(device, dtype=weight_dtype)
-    text_encoder_two.to(device, dtype=weight_dtype)
-
-    gc.collect()
-    torch.cuda.empty_cache()
+    except Exception as e:
+        print(f"An error occurred while loading the models: {e}")
+        raise
 
     return (
         tokenizer_one,
@@ -329,7 +286,6 @@ def load_models(pretrained_model_name_or_path, revision, device, weight_dtype):
         vae,
         unet,
     )
-
 
 def unet_attn_processors_state_dict(unet) -> Dict[str, torch.tensor]:
     """
@@ -365,6 +321,8 @@ class TokenEmbeddingsHandler:
         
         trainable_embeddings = []
         for idx, text_encoder in enumerate(self.text_encoders):
+            if text_encoder is None:
+                continue
             trainable_embeddings.append(text_encoder.text_model.embeddings.token_embedding.weight.data[self.train_ids])
 
         return trainable_embeddings
@@ -398,6 +356,8 @@ class TokenEmbeddingsHandler:
         idx = 0
 
         for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
+            if text_encoder is None:
+                continue
             query_embeddings = current_token_embeddings[idx]
 
             for token_id, query_embedding in enumerate(query_embeddings):
@@ -483,6 +443,9 @@ class TokenEmbeddingsHandler:
         idx = 0
 
         for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
+            if tokenizer is None:
+                continue
+                
             token_ids  = tokenizer.convert_tokens_to_ids(example_tokens)
             embeddings = text_encoder.text_model.embeddings.token_embedding.weight.data[token_ids].clone()
 
@@ -504,6 +467,8 @@ class TokenEmbeddingsHandler:
 
         idx = 0
         for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
+            if tokenizer is None:
+                continue
             assert isinstance(
                 inserting_toks, list
             ), "inserting_toks should be a list of strings."
@@ -614,7 +579,8 @@ class TokenEmbeddingsHandler:
 
     def pre_optimize_token_embeddings(self, train_dataset, epochs=10):
 
-        ### THIS FUNCTION IS NOT FINISHED YET
+        ### THIS FUNCTION IS NOT DONE YET
+        ### Idea here is to use CLIP-similarity between imgs and prompts to pre-optimize the embeddings
 
         for idx in range(len(train_dataset)):
             (tok1, tok2), vae_latent, mask = train_dataset[idx]
@@ -661,6 +627,8 @@ class TokenEmbeddingsHandler:
         ), "Initialize new tokens before saving embeddings."
         tensors = {}
         for idx, text_encoder in enumerate(self.text_encoders):
+            if text_encoder is None:
+                continue
             assert text_encoder.text_model.embeddings.token_embedding.weight.data.shape[
                 0
             ] == len(self.tokenizers[0]), "Tokenizers should be the same."
@@ -700,6 +668,9 @@ class TokenEmbeddingsHandler:
         idx = 0
 
         for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
+            if text_encoder is None:
+                continue
+
             index_no_updates    = self.embeddings_settings[f"index_no_updates_{idx}"]
             std_token_embedding = self.embeddings_settings[f"std_token_embedding_{idx}"]
             index_updates = ~index_no_updates
@@ -727,6 +698,9 @@ class TokenEmbeddingsHandler:
         means, stds = [], []
 
         for tokenizer, text_encoder in zip(self.tokenizers, self.text_encoders):
+            if text_encoder is None:
+                continue
+
             index_no_updates = self.embeddings_settings[f"index_no_updates_{idx}"]
             text_encoder.text_model.embeddings.token_embedding.weight.data[
                 index_no_updates
@@ -776,6 +750,8 @@ class TokenEmbeddingsHandler:
             for idx in range(len(self.text_encoders)):
                 text_encoder = self.text_encoders[idx]
                 tokenizer = self.tokenizers[idx]
+                if text_encoder is None:
+                    continue
                 try:
                     loaded_embeddings = f.get_tensor(txt_encoder_keys[idx])
                 except:

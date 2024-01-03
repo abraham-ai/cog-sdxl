@@ -13,6 +13,9 @@ import numpy as np
 SDXL_MODEL_CACHE = "./models/juggernaut_v6.safetensors"
 SDXL_URL         = "https://edenartlab-lfs.s3.amazonaws.com/models/checkpoints/juggernautXL_v6.safetensors"
 
+SD15_MODEL_CACHE = "./models/realisticVisionV6"
+# TODO point this url to the correct full folder structure containing the CLIP text-encoder (this wont actually work rn)
+SD15_URL         = "https://edenartlab-lfs.s3.amazonaws.com/models/checkpoints/realisticVisionV60B1_v60B1VAE.safetensors"
 
 def download_weights(url, dest):
     start = time.time()

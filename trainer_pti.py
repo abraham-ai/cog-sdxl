@@ -27,8 +27,8 @@ from dataset_and_utils import (
     unet_attn_processors_state_dict
 )
 
-from io_utils import make_validation_img_grid, download_and_prep_training_data, SDXL_MODEL_CACHE, SDXL_URL
-from diffusers import StableDiffusionXLPipeline
+from io_utils import make_validation_img_grid
+from diffusers import StableDiffusionPipeline
 from safetensors.torch import load_file
 
 import matplotlib.pyplot as plt
@@ -151,7 +151,11 @@ def patch_pipe_with_lora(pipe, lora_path):
         tensors = load_file(unet_path)
 
     unet.load_state_dict(tensors, strict=False)
-    handler = TokenEmbeddingsHandler([pipe.text_encoder, pipe.text_encoder_2], [pipe.tokenizer, pipe.tokenizer_2])
+    try: #SDXL
+        handler = TokenEmbeddingsHandler([pipe.text_encoder, pipe.text_encoder_2], [pipe.tokenizer, pipe.tokenizer_2])
+    except: #SD15
+        handler = TokenEmbeddingsHandler([pipe.text_encoder, None], [pipe.tokenizer, None])
+
     handler.load_embeddings(os.path.join(lora_path, f"{concept_name}_embeddings.safetensors"))
     return pipe
 
@@ -286,7 +290,7 @@ def prepare_prompt_for_lora(prompt, lora_path, interpolation=False, verbose=True
 
 
 @torch.no_grad()
-def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.7, n_imgs = 4, debug = False, device = "cuda:0"):
+def render_images(lora_path, train_step, seed, is_lora, pretrained_model, lora_scale = 0.7, n_imgs = 4, debug = False, device = "cuda:0"):
 
     random.seed(seed)
 
@@ -379,16 +383,20 @@ def render_images(lora_path, train_step, seed, is_lora, lora_scale = 0.7, n_imgs
         validation_prompts[0] = '<concept>'
 
     torch.cuda.empty_cache()
-    print(f"Loading inference pipeline from {SDXL_MODEL_CACHE}...")
-    if SDXL_MODEL_CACHE.endswith(".safetensors"):
-        pipeline = StableDiffusionXLPipeline.from_single_file(
-            SDXL_MODEL_CACHE, torch_dtype=torch.float16, use_safetensors=True)
+    print(f"Loading inference pipeline from {pretrained_model['path']}...")
+
+    if pretrained_model['path'].endswith('.safetensors'):
+        pipeline = StableDiffusionPipeline.from_single_file(
+            pretrained_model['path'], torch_dtype=torch.float16, use_safetensors=True)
     else:
-        pipeline = StableDiffusionXLPipeline.from_pretrained(
-            SDXL_MODEL_CACHE, torch_dtype=torch.float16)
+        pipeline = StableDiffusionPipeline.from_pretrained(
+            pretrained_model['path'], torch_dtype=torch.float16, use_safetensors=True)
 
     pipeline = pipeline.to(device)
     pipeline = patch_pipe_with_lora(pipeline, lora_path)
+
+    print("------ scheduler: ------")
+    print(pipeline.scheduler)
 
     validation_prompts = [prepare_prompt_for_lora(prompt, lora_path) for prompt in validation_prompts]
     generator = torch.Generator(device=device).manual_seed(0)
@@ -457,8 +465,7 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
         json.dump(args_dict, f, indent=4)
 
 def main(
-    pretrained_model_name_or_path: Optional[str] = "./cache",
-    revision: Optional[str] = None,
+    pretrained_model,
     instance_data_dir: Optional[str] = "./dataset/zeke/captions.csv",
     output_dir: str = "lora_output",
     seed: Optional[int] = random.randint(0, 2**32 - 1),
@@ -523,7 +530,7 @@ def main(
         text_encoder_two,
         vae,
         unet,
-    ) = load_models(pretrained_model_name_or_path, revision, device, weight_dtype)
+    ) = load_models(pretrained_model, device, weight_dtype)
 
     # Initialize new tokens for training.
 
@@ -545,12 +552,13 @@ def main(
 
     text_encoder_parameters = []
     for text_encoder in text_encoders:
-        for name, param in text_encoder.named_parameters():
-            if "token_embedding" in name:
-                param.requires_grad = True
-                text_encoder_parameters.append(param)
-            else:
-                param.requires_grad = False
+        if text_encoder is not  None:
+            for name, param in text_encoder.named_parameters():
+                if "token_embedding" in name:
+                    param.requires_grad = True
+                    text_encoder_parameters.append(param)
+                else:
+                    param.requires_grad = False
 
     unet_param_to_optimize_names = []
     unet_lora_parameters = []
@@ -783,13 +791,21 @@ def main(
             progress_bar.update(1)
             progress_bar.set_description(f"# PTI :step: {global_step}, epoch: {epoch}")
             #progress_bar.refresh()
+            
+            try: #sdxl
+                (tok1, tok2), vae_latent, mask = batch
+            except: #sd15
+                tok1, vae_latent, mask = batch
+                tok2 = None
 
-            (tok1, tok2), vae_latent, mask = batch
             vae_latent = vae_latent.to(weight_dtype)
 
             # tokens to text embeds
             prompt_embeds_list = []
             for tok, text_encoder in zip((tok1, tok2), text_encoders):
+                if tok is None:
+                    continue
+
                 prompt_embeds_out = text_encoder(
                     tok.to(text_encoder.device),
                     output_hidden_states=True,
@@ -936,7 +952,7 @@ def main(
                 if debug:
                     plot_loss(losses, save_path=f'{output_dir}/losses.png')
                     plot_lrs(lora_lrs, ti_lrs, save_path=f'{output_dir}/learning_rates.png')
-                    validation_prompts = render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4, debug=debug)
+                    validation_prompts = render_images(output_save_dir, global_step, seed, is_lora, pretrained_model, n_imgs = 4, debug=debug)
             
             images_done += train_batch_size
             global_step += 1
@@ -977,7 +993,7 @@ def main(
     gc.collect()
     torch.cuda.empty_cache()
 
-    validation_prompts = render_images(output_save_dir, global_step, seed, is_lora, n_imgs = 4, debug=debug)
+    validation_prompts = render_images(output_save_dir, global_step, seed, is_lora, pretrained_model, n_imgs = 4, debug=debug)
 
     return output_save_dir
 

@@ -1,12 +1,8 @@
-# Models:
-sdxl-cache/
-#models/*
 
 # Subfolders:
 lora_models*
 example_datasets/
 
-cache
 refiner-cache/
 safety-cache/
 
