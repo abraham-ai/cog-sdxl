@@ -17,6 +17,7 @@ import torch.nn.functional as F
 
 from diffusers.models.attention_processor import LoRAAttnProcessor, LoRAAttnProcessor2_0
 from diffusers.optimization import get_scheduler
+from diffusers import EulerDiscreteScheduler
 from safetensors.torch import save_file
 from tqdm import tqdm
 
@@ -394,9 +395,7 @@ def render_images(lora_path, train_step, seed, is_lora, pretrained_model, lora_s
 
     pipeline = pipeline.to(device)
     pipeline = patch_pipe_with_lora(pipeline, lora_path)
-
-    print("------ scheduler: ------")
-    print(pipeline.scheduler)
+    pipeline.scheduler = EulerDiscreteScheduler.from_config(pipeline.scheduler.config)
 
     validation_prompts = [prepare_prompt_for_lora(prompt, lora_path) for prompt in validation_prompts]
     generator = torch.Generator(device=device).manual_seed(0)
