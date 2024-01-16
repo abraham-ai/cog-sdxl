@@ -397,6 +397,7 @@ def render_images(lora_path, train_step, seed, is_lora, pretrained_model, lora_s
     pipeline = patch_pipe_with_lora(pipeline, lora_path)
     pipeline.scheduler = EulerDiscreteScheduler.from_config(pipeline.scheduler.config)
 
+    validation_prompts_raw = validation_prompts
     validation_prompts = [prepare_prompt_for_lora(prompt, lora_path) for prompt in validation_prompts]
     generator = torch.Generator(device=device).manual_seed(0)
     pipeline_args = {
@@ -423,7 +424,7 @@ def render_images(lora_path, train_step, seed, is_lora, pretrained_model, lora_s
     gc.collect()
     torch.cuda.empty_cache()
 
-    return validation_prompts
+    return validation_prompts_raw
 
 def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_lora_parameters, unet_param_to_optimize_names):
     """
@@ -532,7 +533,6 @@ def main(
     ) = load_models(pretrained_model, device, weight_dtype)
 
     # Initialize new tokens for training.
-
     embedding_handler = TokenEmbeddingsHandler(
         [text_encoder_one, text_encoder_two], [tokenizer_one, tokenizer_two]
     )
@@ -994,7 +994,7 @@ def main(
 
     validation_prompts = render_images(output_save_dir, global_step, seed, is_lora, pretrained_model, n_imgs = 4, debug=debug)
 
-    return output_save_dir
+    return output_save_dir, validation_prompts
 
 
 if __name__ == "__main__":

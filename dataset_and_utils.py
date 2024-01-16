@@ -478,7 +478,7 @@ class TokenEmbeddingsHandler:
 
             self.inserting_toks = inserting_toks
 
-            print("Inserting new tokens into tokenizer:")
+            print(f"Inserting new tokens into tokenizer-{idx}:")
             print(self.inserting_toks)
 
             special_tokens_dict = {"additional_special_tokens": self.inserting_toks}
@@ -496,7 +496,6 @@ class TokenEmbeddingsHandler:
             )
 
             print(f"Text encoder {idx} token_embedding_std:  {std_token_embedding}")
-            print(f"Text encoder {idx} token_embedding_mean: {std_token_mean}")
 
             if starting_toks is not None:
                 assert isinstance(
@@ -518,7 +517,7 @@ class TokenEmbeddingsHandler:
             else:
 
                 if 1: 
-                    init_embeddings = (torch.randn(len(self.train_ids), text_encoder.text_model.config.hidden_size).to(device=self.device).to(dtype=self.dtype) * std_token_embedding)
+                    init_embeddings = (torch.randn(len(self.train_ids), text_encoder.text_model.config.hidden_size).to(device=self.device).to(dtype=self.dtype) * std_token_embedding * 1.0)
                 else:
                     first_tokens = [
                         "Sophia",

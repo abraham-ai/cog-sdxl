@@ -1,10 +1,17 @@
 cog predict \
-    -i run_name="xander_SD15" -i caption_prefix="" \
-    -i concept_mode="face" \
+    -i run_name="plankton_style" -i caption_prefix="" \
+    -i concept_mode="style" \
     -i train_batch_size="4" \
-    -i sd_model_version="sd15" \
-    -i checkpointing_steps="300" \
-    -i max_train_steps="900" \
+    -i sd_model_version="sdxl" \
     -i debug="True" \
-    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/xander_5.zip" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/plankton_style.zip" \
+    -i seed="0"
+
+cog predict \
+    -i run_name="plankton_object" -i caption_prefix="" \
+    -i concept_mode="object" \
+    -i train_batch_size="4" \
+    -i sd_model_version="sdxl" \
+    -i debug="True" \
+    -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/plankton_object.zip" \
     -i seed="0"

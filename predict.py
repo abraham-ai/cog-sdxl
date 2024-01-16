@@ -475,7 +475,7 @@ class Predictor(BasePredictor):
                 if not debug:
                     yield CogOutput(name=name, progress=np.round(progress_f, 2))
             except StopIteration as e:
-                output_save_dir = e.value  # Capture the return value
+                output_save_dir, validation_prompts = e.value  # Capture the return value
                 break
 
         if not debug:
@@ -495,8 +495,11 @@ class Predictor(BasePredictor):
                 "trainig_captions"]
             args_dict = {k: v for k, v in args_dict.items() if k in keys_to_keep}
 
+        args_dict["grid_prompts"] = validation_prompts
+
         # save final training_args:
-        with open(os.path.join(output_dir, "training_args.json"), "w") as f:
+        final_args_dict_path = os.path.join(output_dir, "training_args.json")
+        with open(final_args_dict_path, "w") as f:
             json.dump(args_dict, f, indent=4)
 
         validation_grid_img_path = os.path.join(output_save_dir, "validation_grid.jpg")
@@ -512,6 +515,7 @@ class Predictor(BasePredictor):
 
             # Add instructions README:
             tar.add("instructions_README.md", arcname="README.md")
+            tar.add(final_args_dict_path, arcname="training_args.json")
 
         attributes = args_dict
         runtime = time.time() - start_time
