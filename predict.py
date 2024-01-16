@@ -511,8 +511,9 @@ class Predictor(BasePredictor):
             for file_path in directory.rglob("*"):
                 print(file_path)
                 arcname = file_path.relative_to(directory)
-                tar.add(file_path, arcname=arcname)
-
+                if arcname != "training_args.json": # we're adding the final, updated version of the args
+                    tar.add(file_path, arcname=arcname)
+            
             # Add instructions README:
             tar.add("instructions_README.md", arcname="README.md")
             tar.add(final_args_dict_path, arcname="training_args.json")
