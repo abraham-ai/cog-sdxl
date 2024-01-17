@@ -3,6 +3,7 @@ cog predict \
     -i concept_mode="style" \
     -i train_batch_size="4" \
     -i sd_model_version="sdxl" \
+    -i max_train_steps="40" \
     -i debug="True" \
     -i lora_training_urls="https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/plankton_style.zip" \
     -i seed="0"
