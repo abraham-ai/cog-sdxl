@@ -461,8 +461,6 @@ def save(output_dir, global_step, unet, embedding_handler, token_dict, args_dict
 
     with open(f"{output_dir}/special_params.json", "w") as f:
         json.dump(token_dict, f)
-    with open(f"{output_dir}/training_args.json", "w") as f:
-        json.dump(args_dict, f, indent=4)
 
 def main(
     pretrained_model,
@@ -938,11 +936,6 @@ def main(
 
             lora_lrs.append(get_avg_lr(optimizer_prod))
 
-            # Save intermediate results:
-            if (global_step == 25) and debug and 0: # visualize the initial token embeddings
-                output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
-                save(output_save_dir, global_step, unet, embedding_handler, token_dict, args_dict, seed, is_lora, unet_lora_parameters, unet_param_to_optimize_names)
-
             # Print some statistics:
             if (global_step % checkpointing_steps == 0) and (global_step > 0):
                 output_save_dir = f"{checkpoint_dir}/checkpoint-{global_step}"
@@ -992,7 +985,13 @@ def main(
     gc.collect()
     torch.cuda.empty_cache()
 
+    # render the final example images:
     validation_prompts = render_images(output_save_dir, global_step, seed, is_lora, pretrained_model, n_imgs = 4, debug=debug)
+
+    # save the final validation prompts:
+    args_dict["grid_prompts"] = validation_prompts
+    with open(f"{output_save_dir}/training_args.json", "w") as f:
+        json.dump(args_dict, f, indent=4)
 
     return output_save_dir, validation_prompts
 
