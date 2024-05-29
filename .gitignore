@@ -1,4 +1,5 @@
 lora_models*
+.huggingface
 models
 .env
 refiner-cache
