@@ -51,14 +51,17 @@ def print_gpu_info():
         # Print disk space information
         disk_usage = psutil.disk_usage('/')
         total_disk = disk_usage.total // (1024 * 1024)
+        used_disk = disk_usage.used // (1024 * 1024)
+        free_disk = disk_usage.free // (1024 * 1024)
         percent_disk_used = disk_usage.percent
-        print(f"Total disk space: {total_disk} MB with {percent_disk_used}% used")
+        print(f"Free disk space: {free_disk} MB with {percent_disk_used}% used")
 
         # Print RAM information
         virtual_mem = psutil.virtual_memory()
         total_ram = virtual_mem.total // (1024 * 1024)
+        current_ram = virtual_mem.used // (1024 * 1024)
         percent_ram_used = virtual_mem.percent
-        print(f"Total RAM: {total_ram} MB with {percent_ram_used}% used")
+        print(f"Current used RAM: {current_ram} MB with {percent_ram_used}% used")
     
     except Exception as e:
         print(f'Error in gathering system info: {str(e)}')
