@@ -11,6 +11,9 @@ import gc
 import numpy as np
 from typing import List, Optional
 
+
+from PIL import Image
+eden_logo_png = Image.open("eden_logo_transparent.png")
 import torch
 import torch.utils.checkpoint
 import torch.nn.functional as F
@@ -33,6 +36,22 @@ from diffusers import StableDiffusionPipeline
 from safetensors.torch import load_file
 
 import matplotlib.pyplot as plt
+
+def print_gpu_info():
+    try:
+        # pick the GPU with the most free memory:
+        gpu_ids = [i for i in range(torch.cuda.device_count())]
+        gpu_mem = []
+        for gpu_id in gpu_ids:
+            free_memory, tot_mem = torch.cuda.mem_get_info(device=gpu_id)
+            gpu_mem.append(free_memory)
+            print("GPU %d: %d MB free" %(gpu_id, free_memory / 1024 / 1024))
+        
+    except Exception as e:
+        print(f'Error picking best gpu: {str(e)}')
+
+    return
+
 
 def compute_snr(noise_scheduler, timesteps):
     """
@@ -955,6 +974,7 @@ def main(
                 print(f" ---- avg training fps: {images_done / (time.time() - start_time):.2f}", end="\r")
 
             if global_step % (max_train_steps//20) == 0:
+                print_gpu_info()
                 progress = (global_step / max_train_steps) + 0.05
                 yield np.min((progress, 1.0))
 
@@ -987,7 +1007,37 @@ def main(
     gc.collect()
     torch.cuda.empty_cache()
 
-    validation_prompts = render_images(output_save_dir, global_step, seed, is_lora, pretrained_model, n_imgs = 4, debug=debug)
+    print("Cleared training pipeline! Trying to render final thumbnail images...")
+    print_gpu_info()
+
+    try:
+        validation_prompts = render_images(output_save_dir, global_step, seed, is_lora, pretrained_model, n_imgs = 4, debug=debug)
+    except Exception as e:
+        print(f"Failed to render validation images: {e}")
+        eden_logo_png = Image.open("eden_logo_transparent.png").convert('RGBA')
+        validation_prompts = [""]*4
+        def random_dark_color():
+            return np.random.randint(200, 255, (3,))  # Generate one RGB color
+
+        # Convert to numpy array
+        np_image = np.array(eden_logo_png)
+        height, width, _ = np_image.shape
+
+        # Extract the alpha channel and create a mask where alpha is 0
+        alpha_channel = np_image[:, :, 3]
+        transparent_mask = alpha_channel == 0
+
+        for i in range(4):
+            # Create a new RGB image and fill with the original RGB values
+            rgb_image = np_image[:, :, :3].copy()
+            # Replace transparent pixels with random dark colors
+            rgb_image[transparent_mask] = random_dark_color()
+            new_image = Image.fromarray(rgb_image, 'RGB')
+            new_image.save(os.path.join(output_save_dir, f"img_{global_step:04d}_{i}.jpg"), format="JPEG", quality=95)
+
+        # create img_grid:
+        img_grid_path = make_validation_img_grid(output_save_dir)
+
     
     with open(f"{output_save_dir}/training_args.json", "w") as f:
         args_dict["grid_prompts"] = validation_prompts

@@ -309,8 +309,7 @@ def prep_img_dir(target_folder):
 def download_and_prep_training_data(piped_urls, data_dir):
 
     for url in str(piped_urls).split('|'):
-        download(url, data_dir)
-        
+        download(url.strip(), data_dir)
 
     # Loop over all files in the data directory:
     for filename in os.listdir(data_dir):

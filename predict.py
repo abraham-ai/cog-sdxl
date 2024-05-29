@@ -2,11 +2,12 @@ import os
 import shutil
 import tarfile
 import json
+import gc
 import time
 import numpy as np
 import pandas as pd
 from collections import OrderedDict
-
+import torch
 from cog import BasePredictor, BaseModel, File, Input, Path as cogPath
 from dotenv import load_dotenv
 from preprocess import preprocess
@@ -23,6 +24,24 @@ MODEL_INFO = {
 DEBUG_MODE = False
 
 load_dotenv()
+
+
+def print_gpu_info():
+    try:
+        # pick the GPU with the most free memory:
+        gpu_ids = [i for i in range(torch.cuda.device_count())]
+        print(f"# of visible GPUs: {len(gpu_ids)}")
+        gpu_mem = []
+        for gpu_id in gpu_ids:
+            free_memory, tot_mem = torch.cuda.mem_get_info(device=gpu_id)
+            gpu_mem.append(free_memory)
+            print("GPU %d: %d MB free" %(gpu_id, free_memory / 1024 / 1024))
+        
+    except Exception as e:
+        print(f'Error picking best gpu: {str(e)}')
+
+    return
+
 
 def clean_filename(filename):
     allowed_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
@@ -137,10 +156,6 @@ class Predictor(BasePredictor):
         concept_mode: str = Input(
             description=" 'face' / 'style' / 'object' (default)",
             default="object",
-        ),
-        sd_model_version: str = Input(
-            description=" 'sdxl' / 'sd15' ",
-            default="sdxl",
         ),
         seed: int = Input(
             description="Random seed for reproducible training. Leave empty to use a random seed",
@@ -266,6 +281,9 @@ class Predictor(BasePredictor):
         bs=6: 8.0 imgs/s,
         """
 
+        print(f"Starting new LoRa training run!!")
+        print_gpu_info()
+
         start_time = time.time()
         out_root_dir = "lora_models"
 
@@ -289,7 +307,7 @@ class Predictor(BasePredictor):
             yield CogOutput(name=name, progress=0.0)
 
         # Initialize pretrained_model dictionary
-        pretrained_model = {"version": sd_model_version}
+        pretrained_model = {"version": "sdxl"}
         pretrained_model.update(MODEL_INFO[pretrained_model['version']])
 
         # Download the weights if they don't exist locally
@@ -310,89 +328,22 @@ class Predictor(BasePredictor):
             token_dict[token_name] = "".join(special_tokens)
             all_token_lists.extend(special_tokens)
             running_tok_cnt += n_tok
-
-        if 0:
-            # overwrite some settings for experimentation:
-            lora_param_scaler = 0.1
-            l1_penalty = 0.2
-            prodigy_d_coef = 0.2
-            ti_lr = 1e-3
-            lora_rank = 24
-
-            lora_training_urls = "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/plantoid_5.zip"
-            concept_mode = "object"
-            mask_target_prompts = ""
-            left_right_flip_augmentation = True
-
-            output_dir1 = os.path.join(out_root_dir, run_name + "_xander")
-            input_dir1, n_imgs1, trigger_text1, segmentation_prompt1, captions1 = preprocess(
-                output_dir1,
-                concept_mode,
-                input_zip_path=lora_training_urls,
-                caption_text=caption_prefix,
-                mask_target_prompts=mask_target_prompts,
-                target_size=resolution,
-                crop_based_on_salience=crop_based_on_salience,
-                use_face_detection_instead=use_face_detection_instead,
-                temp=clipseg_temperature,
-                left_right_flip_augmentation=left_right_flip_augmentation,
-                augment_imgs_up_to_n = augment_imgs_up_to_n,
-                seed = seed,
-            )
-
-            lora_training_urls = "https://storage.googleapis.com/public-assets-xander/A_workbox/lora_training_sets/gene_5.zip"
-            concept_mode = "face"
-            mask_target_prompts = "face"
-            left_right_flip_augmentation = False
-
-            output_dir2 = os.path.join(out_root_dir, run_name + "_gene")
-            input_dir2, n_imgs2, trigger_text2, segmentation_prompt2, captions2 = preprocess(
-                output_dir2,
-                concept_mode,
-                input_zip_path=lora_training_urls,
-                caption_text=caption_prefix,
-                mask_target_prompts=mask_target_prompts,
-                target_size=resolution,
-                crop_based_on_salience=crop_based_on_salience,
-                use_face_detection_instead=use_face_detection_instead,
-                temp=clipseg_temperature,
-                left_right_flip_augmentation=left_right_flip_augmentation,
-                augment_imgs_up_to_n = augment_imgs_up_to_n,
-                seed = seed,
-            )
-            
-
-            # Merge the two preprocessing steps:
-            n_imgs = n_imgs1 + n_imgs2
-            captions = captions1 + captions2
-            trigger_text = trigger_text1
-            segmentation_prompt = segmentation_prompt1
-
-            # Create merged outdir:
-            output_dir = os.path.join(out_root_dir, run_name + "_combined")
-            input_dir  = os.path.join(output_dir, "images_out")
-            os.makedirs(input_dir, exist_ok=True)
-
-            # Merge the two preprocessed datasets:
-            merge_datasets(input_dir1, input_dir2, input_dir, token_dict.keys())
-
-        else: # normal, single token run:
-            
-            output_dir = os.path.join(out_root_dir, run_name)
-            input_dir, n_imgs, trigger_text, segmentation_prompt, captions = preprocess(
-                output_dir,
-                concept_mode,
-                input_zip_path=lora_training_urls,
-                caption_text=caption_prefix,
-                mask_target_prompts=mask_target_prompts,
-                target_size=resolution,
-                crop_based_on_salience=crop_based_on_salience,
-                use_face_detection_instead=use_face_detection_instead,
-                temp=clipseg_temperature,
-                left_right_flip_augmentation=left_right_flip_augmentation,
-                augment_imgs_up_to_n = augment_imgs_up_to_n,
-                seed = seed,
-            )
+        
+        output_dir = os.path.join(out_root_dir, run_name)
+        input_dir, n_imgs, trigger_text, segmentation_prompt, captions = preprocess(
+            output_dir,
+            concept_mode,
+            input_zip_path=lora_training_urls,
+            caption_text=caption_prefix,
+            mask_target_prompts=mask_target_prompts,
+            target_size=resolution,
+            crop_based_on_salience=crop_based_on_salience,
+            use_face_detection_instead=use_face_detection_instead,
+            temp=clipseg_temperature,
+            left_right_flip_augmentation=left_right_flip_augmentation,
+            augment_imgs_up_to_n = augment_imgs_up_to_n,
+            seed = seed,
+        )
 
 
         if not debug:
@@ -523,6 +474,11 @@ class Predictor(BasePredictor):
 
         print(f"LORA training finished in {runtime:.1f} seconds")
         print(f"Returning {out_path}")
+
+        # empty cuda cache:
+        gc.collect()
+        torch.cuda.empty_cache()
+        print_gpu_info()
 
         if DEBUG_MODE or debug:
             yield cogPath(out_path)
