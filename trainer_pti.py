@@ -11,9 +11,8 @@ import gc
 import numpy as np
 from typing import List, Optional
 
-
 from PIL import Image
-eden_logo_png = Image.open("eden_logo_transparent.png")
+
 import torch
 import torch.utils.checkpoint
 import torch.nn.functional as F
@@ -37,6 +36,9 @@ from safetensors.torch import load_file
 
 import matplotlib.pyplot as plt
 
+def random_dark_color():
+    return np.random.randint(200, 255, (3,))  # Generate one RGB color
+    
 def print_gpu_info():
     try:
         # pick the GPU with the most free memory:
@@ -1016,8 +1018,6 @@ def main(
         print(f"Failed to render validation images: {e}")
         eden_logo_png = Image.open("eden_logo_transparent.png").convert('RGBA')
         validation_prompts = [""]*4
-        def random_dark_color():
-            return np.random.randint(200, 255, (3,))  # Generate one RGB color
 
         # Convert to numpy array
         np_image = np.array(eden_logo_png)
