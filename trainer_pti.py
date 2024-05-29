@@ -51,17 +51,16 @@ def print_gpu_info():
         # Print disk space information
         disk_usage = psutil.disk_usage('/')
         total_disk = disk_usage.total // (1024 * 1024)
-        used_disk = disk_usage.used // (1024 * 1024)
-        free_disk = disk_usage.free // (1024 * 1024)
+        used_disk  = disk_usage.used // (1024 * 1024)
         percent_disk_used = disk_usage.percent
-        print(f"Free disk space: {free_disk} MB with {percent_disk_used}% used")
+        print(f"Used disk space: {used_disk}/{total_disk} MB with {percent_disk_used}% used")
 
         # Print RAM information
         virtual_mem = psutil.virtual_memory()
-        total_ram = virtual_mem.total // (1024 * 1024)
+        total_ram   = virtual_mem.total // (1024 * 1024)
         current_ram = virtual_mem.used // (1024 * 1024)
         percent_ram_used = virtual_mem.percent
-        print(f"Current used RAM: {current_ram} MB with {percent_ram_used}% used")
+        print(f"Current used RAM: {current_ram}/{total_ram} MB = {percent_ram_used}% used")
     
     except Exception as e:
         print(f'Error in gathering system info: {str(e)}')
@@ -427,10 +426,13 @@ def render_images(lora_path, train_step, seed, is_lora, pretrained_model, lora_s
         pipeline = StableDiffusionPipeline.from_pretrained(
             pretrained_model['path'], torch_dtype=torch.float16, use_safetensors=True)
 
-    pipeline = pipeline.to(device)
+    print("Inference pipeline loaded!")
+    pipeline = pipeline.to(device, dtype=torch.float16)
+    print("Inference pipeline moved to device and torch.float16!")
     pipeline = patch_pipe_with_lora(pipeline, lora_path)
     pipeline.scheduler = EulerDiscreteScheduler.from_config(pipeline.scheduler.config)
 
+    print("Preparing validation prompts...")
     validation_prompts_raw = validation_prompts
     validation_prompts = [prepare_prompt_for_lora(prompt, lora_path) for prompt in validation_prompts]
     generator = torch.Generator(device=device).manual_seed(0)
