@@ -12,6 +12,7 @@ import numpy as np
 from typing import List, Optional
 
 from PIL import Image
+import psutil
 
 import torch
 import torch.utils.checkpoint
@@ -41,19 +42,28 @@ def random_dark_color():
     
 def print_gpu_info():
     try:
-        # pick the GPU with the most free memory:
+        # Print GPU memory information
         gpu_ids = [i for i in range(torch.cuda.device_count())]
-        gpu_mem = []
         for gpu_id in gpu_ids:
-            free_memory, tot_mem = torch.cuda.mem_get_info(device=gpu_id)
-            gpu_mem.append(free_memory)
-            print("GPU %d: %d MB free" %(gpu_id, free_memory / 1024 / 1024))
-        
+            free_memory, total_memory = torch.cuda.mem_get_info(device=gpu_id)
+            print(f"GPU {gpu_id}: {free_memory // 1024 // 1024} MB free")
+
+        # Print disk space information
+        disk_usage = psutil.disk_usage('/')
+        total_disk = disk_usage.total // (1024 * 1024)
+        percent_disk_used = disk_usage.percent
+        print(f"Total disk space: {total_disk} MB with {percent_disk_used}% used")
+
+        # Print RAM information
+        virtual_mem = psutil.virtual_memory()
+        total_ram = virtual_mem.total // (1024 * 1024)
+        percent_ram_used = virtual_mem.percent
+        print(f"Total RAM: {total_ram} MB with {percent_ram_used}% used")
+    
     except Exception as e:
-        print(f'Error picking best gpu: {str(e)}')
+        print(f'Error in gathering system info: {str(e)}')
 
     return
-
 
 def compute_snr(noise_scheduler, timesteps):
     """
