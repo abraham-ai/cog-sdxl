@@ -1018,10 +1018,7 @@ def main(
         print(f"Failed to render validation images: {e}")
         eden_logo_png = Image.open("eden_logo_transparent.png").convert('RGBA')
         validation_prompts = [""]*4
-
-        # Convert to numpy array
         np_image = np.array(eden_logo_png)
-        height, width, _ = np_image.shape
 
         # Extract the alpha channel and create a mask where alpha is 0
         alpha_channel = np_image[:, :, 3]
